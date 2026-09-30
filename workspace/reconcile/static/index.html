@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>医疗行为依据事后对账</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<main class="login-card">
+  <h1>医疗行为与同意依据事后对账</h1>
+  <p class="muted">合规 / 研究站点 / 参与人入口</p>
+  <label>账号<input id="login" value="compliance"></label>
+  <label>密码<input id="password" type="password" value="demo1234"></label>
+  <button onclick="login()">登录</button>
+  <pre id="error" class="error"></pre>
+  <p class="muted">演示：compliance / sitea / siteb / wang / zhao，密码 demo1234</p>
+</main>
+<script src="/static/app.js"></script>
+<script>
+async function login(){
+  try{
+    const r = await api('/api/auth/login', {login:v('login'), password:v('password')});
+    localStorage.token = r.token;
+    location = r.user.role === 'compliance' ? '/static/compliance.html'
+      : r.user.role === 'site' ? '/static/site.html' : '/static/subject.html';
+  }catch(e){ $('error').textContent = e.message; }
+}
+</script>
+</body>
+</html>

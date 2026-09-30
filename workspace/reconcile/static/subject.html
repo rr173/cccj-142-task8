@@ -1,0 +1,10 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>我的执行依据</title><link rel="stylesheet" href="/static/style.css"></head><body>
+<main><h1>我的相关执行依据 <button class="secondary" onclick="logout()">退出</button></h1><p id="who" class="muted"></p>
+<div class="card"><h2>许可快照与终止</h2><div id="permits"></div></div>
+<div class="card"><h2>执行对账记录</h2><table><thead><tr><th>发生</th><th>操作</th><th>用途</th><th>引用依据</th><th>对账结果</th><th>对账版本</th><th>说明</th></tr></thead><tbody id="items"></tbody></table></div></main>
+<script src="/static/app.js"></script><script>
+async function boot(){ await me(); const d=await api('/api/subject/basis',undefined,'GET');
+ $('permits').innerHTML=d.permits.map(p=>`<p><b>${esc(p.permit_id)}</b> ${p.family}@${p.basis_version}；生效 ${p.effective_at}<br>操作：${p.scope.join(',')}；用途：${(p.allowed_purposes.length?p.allowed_purposes:['*']).join(',')}<br>终止：${p.terminations.map(t=>esc(t.terminated_at)+' '+esc(t.reason)).join('；')||'无'}</p>`).join('')||'<p>无</p>';
+ $('items').innerHTML=d.executions.map(i=>`<tr><td>${esc(i.occurred_at)}</td><td>${esc(i.neutral_op)}</td><td>${esc(i.purpose)}</td><td>${esc(i.basis_family)}@${i.basis_version}</td><td>${i.result_label}</td><td>#${i.reconciliation_version}</td><td>${esc(JSON.stringify(i.detail))}</td></tr>`).join(''); }
+boot().catch(e=>alert(e.message));
+</script></body></html>

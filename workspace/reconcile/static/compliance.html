@@ -1,0 +1,20 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
+<title>合规周期重算与处置</title><link rel="stylesheet" href="/static/style.css"></head><body>
+<main><h1>合规人员：周期重算与处置 <button class="secondary" onclick="logout()">退出</button></h1>
+<p id="who" class="muted"></p>
+<div class="card"><h2>周期</h2><select id="cycle"></select><button onclick="loadLatest()">读取最新版本</button><button onclick="recompute()">重算并发布</button>
+<input id="newCycle" placeholder='新建周期 JSON：{"id":"C1","starts_at":"...","ends_at":"..."}'><button onclick="createCycle()">创建</button></div>
+<div class="grid" id="counts"></div>
+<div class="card"><table><thead><tr><th>#</th><th>发生</th><th>对象</th><th>机构</th><th>操作</th><th>用途</th><th>引用依据</th><th>结果</th><th>说明</th><th>处置</th></tr></thead><tbody id="items"></tbody></table></div>
+<div class="card"><h2>处置差异</h2>
+<p class="muted">记录采用的快照版本与理由；原判断在来源变化后会自动转为待复核，但不覆盖。</p>
+<input id="itemId" placeholder="差异项 ID"><input id="snapVer" placeholder="采用快照版本，如 2">
+<select id="resolution"><option>accepted_justified</option><option>documented_exception</option><option>corrective_action</option><option>escalated</option><option>dismissed</option></select>
+<textarea id="reason" placeholder="理由"></textarea><button onclick="dispose()">提交处置</button><pre id="msg"></pre></div>
+<div class="card"><h2>待复核旧处置</h2><button onclick="loadStale()">刷新</button><div id="stale"></div></div>
+<div class="card"><h2>上报/导入</h2>
+<textarea id="snapshot" placeholder='许可快照 JSON'></textarea><button onclick="post('/api/permit-snapshots','snapshot')">导入许可快照</button>
+<textarea id="termination" placeholder='终止事件 JSON'></textarea><button onclick="post('/api/permit-terminations','termination')">导入终止事件</button>
+<textarea id="claim" placeholder='单笔声明 JSON 或 {"claims":[...]}'></textarea><button onclick="claim()">接收声明</button><button onclick="batch()">批量导入</button>
+<pre id="ingestMsg"></pre></div></main>
+<script src="/static/app.js"></script><script src="/static/compliance.js"></script></body></html>

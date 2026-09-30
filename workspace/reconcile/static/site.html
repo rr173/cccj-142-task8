@@ -1,0 +1,11 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>研究站点差异</title><link rel="stylesheet" href="/static/style.css"></head><body>
+<main><h1>研究站点：本站差异 <button class="secondary" onclick="logout()">退出</button></h1><p id="who" class="muted"></p>
+<div class="card"><select id="cycle"></select><button onclick="load()">查看最新版本</button></div>
+<div class="grid" id="counts"></div><table><thead><tr><th>#</th><th>发生</th><th>对象</th><th>操作</th><th>用途</th><th>依据</th><th>结果</th><th>说明</th><th>合规处置</th></tr></thead><tbody id="items"></tbody></table></main>
+<script src="/static/app.js"></script><script>
+async function boot(){ await me(); const cs=await api('/api/cycles',undefined,'GET'); $('cycle').innerHTML=cs.map(c=>`<option>${c.id}</option>`).join(''); if(cs.length)load(); }
+async function load(){ const d=await api(`/api/cycles/${$('cycle').value}/latest`,undefined,'GET');
+ $('counts').innerHTML=Object.entries(d.counts).map(([k,n])=>`<div class="metric"><b>${n}</b><br>${k}</div>`).join('');
+ $('items').innerHTML=rows(d.items); }
+boot().catch(e=>alert(e.message));
+</script></body></html>
