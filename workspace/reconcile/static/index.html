@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>医疗行为与同意依据事后对账</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+<header><h1>医疗行为与同意依据事后对账</h1><div id="who"></div></header>
+<main id="login">
+  <section class="card">
+    <h2>登录</h2>
+    <label>账号 <input id="login" value="comp"></label>
+    <label>密码 <input id="password" type="password" value="comp-pass"></label>
+    <button onclick="App.login()">登录</button>
+    <p class="hint">合规 comp/comp-pass；站点 sitea 或 siteb/site-pass；参与人 wang/wang-pass 或 zhao/zhao-pass</p>
+    <pre id="error" class="error"></pre>
+  </section>
+</main>
+<main id="app" hidden>
+  <div class="tabs">
+    <button data-view="compliance">合规周期重算与处置</button>
+    <button data-view="site">研究站点差异</button>
+    <button data-view="participant">参与人执行依据</button>
+  </div>
+  <section id="compliance" class="page"></section>
+  <section id="site" class="page" hidden></section>
+  <section id="participant" class="page" hidden></section>
+</main>
+<script src="/static/app.js"></script>
+</body>
+</html>

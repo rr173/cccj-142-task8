@@ -1,0 +1,21 @@
+body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:#f5f7fb;color:#172033}
+header{background:#17324d;color:white;padding:16px 24px;display:flex;justify-content:space-between;align-items:center}
+h1{font-size:20px;margin:0}
+main{max-width:1200px;margin:24px auto;padding:0 16px}
+.card{background:white;border:1px solid #d9e0ea;border-radius:10px;padding:18px;margin-bottom:16px;box-shadow:0 1px 3px #0001}
+label{display:block;margin:10px 0;font-size:14px}
+input,select,textarea{width:100%;box-sizing:border-box;padding:8px;border:1px solid #b9c4d2;border-radius:6px;margin-top:4px}
+textarea{min-height:70px}
+button{background:#1768a8;color:white;border:0;border-radius:6px;padding:8px 12px;margin:4px 4px 4px 0;cursor:pointer}
+button.secondary{background:#607086}button.danger{background:#a33d3d}
+table{border-collapse:collapse;width:100%;background:white;font-size:13px}
+th,td{border:1px solid #d9e0ea;padding:7px;text-align:left;vertical-align:top}
+th{background:#edf2f7}
+.error{color:#a33d3d;white-space:pre-wrap}.hint{color:#607086;font-size:12px}
+.tabs{margin-bottom:16px}.pill{display:inline-block;border-radius:20px;padding:2px 9px;background:#e7eef8;color:#17324d;font-size:12px}
+.pill.explained{background:#dff3e5;color:#176b32}.pill.missing_basis{background:#fdecd0;color:#8a5100}
+.pill.out_of_scope{background:#fde2e1;color:#922b2b}.pill.post_termination{background:#eee3fb;color:#5c2b91}
+.pill.awaiting_late_materials{background:#e2e8fb;color:#26459c}.pill.needs_review{background:#fff0b8;color:#7a5a00}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}.row{display:flex;gap:8px;align-items:end;flex-wrap:wrap}
+.row label{flex:1;min-width:160px}
+code{background:#eef2f7;padding:1px 4px;border-radius:4px}
