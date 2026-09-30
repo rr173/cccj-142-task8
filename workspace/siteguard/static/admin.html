@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>安全管理台</title>
+<link rel="stylesheet" href="/static/shared/style.css">
+</head>
+<body>
+<header>
+  <h1>安全管理台</h1>
+  <nav><a href="/">首页</a><a href="/static/audit.html">中性审计</a></nav>
+  <span class="spacer"></span>
+  <span class="who" id="who"></span>
+  <button class="secondary" id="logoutBtn" style="padding:4px 10px">退出</button>
+</header>
+<main>
+  <div class="card">
+    <h2>签发一次性注册码</h2>
+    <div class="row">
+      <div class="field"><label>有效时长（分钟，1–10080）</label>
+        <input id="codeMinutes" type="number" value="60" min="1" max="10080" style="min-width:140px"></div>
+      <div class="field"><label>证书可用角色（可多选）</label>
+        <div class="pill-keys" id="rolePick">
+          <label><input type="checkbox" value="supervisor" checked>现场主管</label>
+          <label><input type="checkbox" value="inspector" checked>质检员</label>
+          <label><input type="checkbox" value="recorder">记录员</label>
+        </div>
+      </div>
+      <button id="issueCodeBtn">签发</button>
+    </div>
+    <div class="flash" id="codeMsg"></div>
+    <pre id="newCode" class="mono" style="display:none;background:#fafbfc;border:1px solid var(--line);border-radius:8px;padding:10px"></pre>
+  </div>
+
+  <div class="card">
+    <h2>本站点设备与证书代次</h2>
+    <div class="row" style="margin-bottom:10px">
+      <button id="refreshDevBtn" class="secondary">刷新</button>
+      <span class="muted">隔离立即生效；轮换需终端在自检页/登记页用旧私钥与新私钥双签完成。</span>
+    </div>
+    <div id="devicesBox"></div>
+  </div>
+
+  <div class="card">
+    <h2>本站点落款记录（中性）</h2>
+    <button id="refreshRecBtn" class="secondary">刷新记录</button>
+    <div id="recordsBox" style="margin-top:10px"></div>
+  </div>
+</main>
+<script src="/static/shared/api.js"></script>
+<script src="/static/admin.js"></script>
+</body>
+</html>

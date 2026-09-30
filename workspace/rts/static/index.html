@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>登录 · RCT 随机与盲态药盒平台</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="login-wrap">
+  <h1>多中心临床试验</h1>
+  <h2>随机分组与盲态药盒分配平台</h2>
+  <div class="card">
+    <label>用户名</label>
+    <input id="username" autocomplete="username" placeholder="inv01 / ph01 / safe1">
+    <label>密码</label>
+    <input id="password" type="password" autocomplete="current-password" placeholder="演示密码 demo1234">
+    <button class="btn primary block" id="loginBtn">登 录</button>
+    <p class="hint">角色：研究者(inv01/02) · 药房(ph01/02) · 安全管理员(safe1/safe2)</p>
+  </div>
+</div>
+<div id="toast" class="toast"></div>
+<script src="/static/app.js"></script>
+<script>
+if (Auth.get()) {
+  const map = { investigator: 'investigator.html', pharmacy: 'pharmacy.html', safety: 'safety.html' };
+  location.href = '/static/' + map[Auth.get().role];
+}
+async function doLogin() {
+  const username = el('username').value.trim();
+  const password = el('password').value;
+  try {
+    const s = await api('POST', '/api/login', { username, password });
+    Auth.set(s);
+    const map = { investigator: 'investigator.html', pharmacy: 'pharmacy.html', safety: 'safety.html' };
+    location.href = '/static/' + map[s.role];
+  } catch (e) { toast(e.message, false); }
+}
+el('loginBtn').onclick = doLogin;
+el('password').onkeydown = e => { if (e.key === 'Enter') doLogin(); };
+</script>
+</body>
+</html>

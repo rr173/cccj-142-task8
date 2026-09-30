@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>见证者签署</title>
+<link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+<div id="app"></div>
+<script src="/static/app.js"></script>
+<script src="/static/trust.js"></script>
+<script>
+// 见证者：凭现场提供的一次性链接进入，不持有任何登录令牌
+(async () => {
+  const q = new URLSearchParams(location.search);
+  const sessionId = q.get("session"), role = q.get("role"), token = q.get("token");
+  const enrollment = q.get("enrollment");
+  const mount = document.getElementById("app");
+  if (!sessionId || role !== "witness" || !token || !enrollment) {
+    mount.innerHTML = '<main><div class="card"><h2>链接无效</h2><p>请向现场负责人索取一次性见证签名链接。</p></div></main>';
+    return;
+  }
+  let s;
+  try { s = await api("GET", `/api/sessions/${sessionId}`); }
+  catch (e) { mount.innerHTML = `<main><div class="card"><h2>无法打开会话</h2><div class="err">${esc(e.message)}</div></div></main>`; return; }
+
+  mount.innerHTML = `<main>
+    <div class="card">
+      <h2>见证者在线签署 — ${esc(s.material.family)} v${s.material.version}</h2>
+      <p class="muted">会话 ${esc(s.id)} · 状态 ${pill(s.status)} · 封存指纹
+        <span class="hash">${esc(s.material.body_hash)}</span></p>
+      <details open><summary>请阅读并核对你将见证的封存告知正文</summary><pre>${esc(s.material.body)}</pre></details>
+      <div class="muted">语种：${esc(s.material.language)} · 适用条件：${esc(JSON.stringify(s.material.conditions))}
+        · 允许操作：${opList(s.material.scope)}</div>
+      <label style="margin-top:10px">见证者姓名（将随落款一并封存）</label>
+      <input id="wname" placeholder="真实姓名">
+      <div style="margin-top:10px">
+        <button id="wbtn">我已见证上述同一封存内容的告知过程，确认签署</button>
+      </div>
+      <div id="wmsg"></div>
+      <p class="muted">该链接为一次性，签署后立即失效；重复提交只会返回首次结果。</p>
+    </div></main>`;
+
+  document.getElementById("wbtn").onclick = async () => {
+    const box = document.getElementById("wmsg");
+    const name = document.getElementById("wname").value.trim();
+    if (!name) { toast(box, new Error("请填写见证者姓名")); return; }
+    try {
+      const r = await TRUST.sendExternal("POST", `/api/sessions/${sessionId}/sign`,
+        { role: "witness", signer_name: name, token,
+          idempotency_key: "witness:" + sessionId + ":" + token },
+        { action: "sign", resource: sessionId, role: "witness",
+          witnessToken: token, enrollmentCode: enrollment, sessionId });
+      if (r.error) { toast(box, { message: r.message, code: r.error }); return; }
+      okbox(box, (r.replayed ? "（重复提交，返回首次结果）" : "") +
+        (r.result === "completed" ? "签署完成，全部必签角色已齐备，许可已生成。" : "见证签署已记录。"));
+      document.getElementById("wbtn").disabled = true;
+    } catch (e) { toast(box, e); }
+  };
+})();
+</script>
+</body>
+</html>

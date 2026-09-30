@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>处置凭据库外校验 · 冷链证据</title>
+<link rel="stylesheet" href="/static/shared/style.css">
+</head>
+<body>
+<div class="topbar">
+  <div class="brand">🧊 不可变处置凭据 · 库外重算校验</div>
+  <div class="who"><a href="/static/index.html" style="color:#cbd5e1">返回登录</a></div>
+</div>
+<div class="container" style="max-width:900px">
+  <div class="card">
+    <h3>校验原理（全程在本浏览器内完成，不依赖数据库、不需要登录）</h3>
+    <ol class="muted" style="line-height:1.9">
+      <li>用模块 <b>Ed25519 公钥</b>验证凭据签名，防伪造；</li>
+      <li>用凭据内嵌的片段正文<b>重算片段集合摘要</b>，证明逐点数据未被改动；</li>
+      <li>用凭据内嵌的<b>规则版本参数重跑缺口与连续越界分析</b>，证明计算明细属实；</li>
+      <li>重算<b>决定链摘要</b>（含全部历史版本），证明最终处置与撤销链未被改动。</li>
+    </ol>
+  </div>
+  <div class="card">
+    <h3>① 模块公钥（JWK，带外获取）</h3>
+    <div class="row">
+      <button id="k-fetch" type="button">从本服务获取 /api/public-key</button>
+      <span class="muted">或粘贴质量管理员带外提供的公钥：</span>
+    </div>
+    <textarea id="k-jwk" placeholder='{"kty":"OKP","crv":"Ed25519","x":"..."}' style="min-height:90px"></textarea>
+  </div>
+  <div class="card">
+    <h3>② 待校验凭据（JSON 文件或粘贴）</h3>
+    <div class="row"><input type="file" id="file" accept=".json,application/json"></div>
+    <textarea id="cred" placeholder='{"algorithm":"CC-EVIDENCE-ED25519-SHA256/v1","payload":{...},"signature":"..."}'
+      style="min-height:160px"></textarea>
+    <button id="run">③ 重新校验</button>
+    <pre id="out" class="json" style="display:none;margin-top:14px"></pre>
+  </div>
+</div>
+<script type="module">
+import { verifyInBrowser } from '/static/shared/verify-web.js';
+const $ = (id) => document.getElementById(id);
+$('k-fetch').onclick = async () => {
+  try {
+    const r = await fetch('/api/public-key');
+    const j = await r.json();
+    $('k-jwk').value = JSON.stringify(j.public_jwk, null, 2);
+  } catch (e) { alert('获取公钥失败：' + e.message); }
+};
+$('file').onchange = () => {
+  const f = $('file').files[0];
+  if (!f) return;
+  const rd = new FileReader();
+  rd.onload = () => { $('cred').value = rd.result; };
+  rd.readAsText(f);
+};
+$('run').onclick = async () => {
+  let env, jwk;
+  try { env = JSON.parse($('cred').value); } catch { return alert('凭据不是合法 JSON'); }
+  try { jwk = JSON.parse($('k-jwk').value); } catch { return alert('公钥 JWK 不合法'); }
+  const r = await verifyInBrowser(env, jwk);
+  const out = $('out');
+  out.style.display = '';
+  out.textContent = JSON.stringify(r, null, 2);
+  out.style.borderLeft = '4px solid ' + (r.ok ? '#059669' : '#dc2626');
+};
+</script>
+</body>
+</html>

@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>冷链证据模块 · 登录</title>
+<link rel="stylesheet" href="/static/shared/style.css">
+</head>
+<body>
+<div class="login-wrap">
+  <h1>临床试验用药冷链证据模块</h1>
+  <h2>运输温度证据采集 · 合并缺口分析 · 质量处置凭据</h2>
+  <div class="card" style="text-align:left">
+    <label>账号</label>
+    <input id="username" placeholder="dev1 / qm1 / qm2 / site1" autocomplete="username">
+    <label>密码</label>
+    <input id="password" type="password" placeholder="demo1234" autocomplete="current-password">
+    <button id="btn" style="width:100%;margin-top:16px">登录</button>
+    <p class="muted" style="margin-top:12px">
+      运输设备 → 设备上传页；质量管理员 → 审核页（含撤销复核、凭据签发）；研究站点 → 只读接收结论。
+      本模块只处理中性运单号与传感器编号。
+    </p>
+    <p class="muted" style="margin-bottom:0">
+      凭据持有方可在
+      <a href="/static/verify.html" style="color:var(--primary)">库外重算校验页</a>
+      不登录、不连库地验证片段集合、规则版本与最终决定是否被改动。
+    </p>
+  </div>
+</div>
+<script type="module">
+import { api, setToken, toast } from '/static/shared/api.js';
+const go = (role) => ({
+  device: '/static/device.html',
+  quality: '/static/quality.html',
+  site: '/static/site.html',
+})[role] || '/static/index.html';
+async function doLogin() {
+  const username = document.getElementById('username').value.trim();
+  const password = document.getElementById('password').value;
+  try {
+    const r = await api('POST', '/api/login', { username, password });
+    setToken(r.token);
+    sessionStorage.setItem('cc_me', JSON.stringify({ username: r.username, display: r.display, role: r.role }));
+    location.href = go(r.role);
+  } catch (e) {
+    toast(e.message, 'error');
+  }
+}
+document.getElementById('btn').onclick = doLogin;
+document.getElementById('password').onkeydown = (e) => e.key === 'Enter' && doLogin();
+</script>
+</body>
+</html>

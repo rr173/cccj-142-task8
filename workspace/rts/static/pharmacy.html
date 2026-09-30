@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>药房工作台</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div id="app"></div>
+<div id="toast" class="toast"></div>
+<script src="/static/app.js"></script>
+<script>
+const session = guard('pharmacy');
+if (session) {
+  el('app').innerHTML = headerBlock('药房') + `
+  <main class="container">
+    <div class="grid2">
+      <section class="card">
+        <h3>发药</h3>
+        <label>受试者随机号（向研究者索取）</label>
+        <input id="no" placeholder="如 V10-01-0001">
+        <label>药盒号（可留空，由系统自动匹配；或扫码指定）</label>
+        <input id="kit" placeholder="留空=自动选择（短缺时自动转兼容批号）">
+        <button class="btn primary" onclick="doDispense()">发药</button>
+        <p class="hint blind-note">药房看不到治疗组；系统内部完成盲态匹配。
+        指定药盒不兼容时仅提示"当前不可领取"，无法据此反推分组。</p>
+      </section>
+
+      <section class="card">
+        <h3>退药 / 再入库</h3>
+        <label>药盒号</label>
+        <input id="retKit" placeholder="如 L1001-0003">
+        <input id="retNote" placeholder="退药原因（可选）">
+        <div class="row">
+          <button class="btn" onclick="doReturn()">退药</button>
+          <button class="btn" onclick="doRestock()">退回盒再入库</button>
+        </div>
+      </section>
+    </div>
+
+    <section class="card">
+      <h3>可领取药盒 <button class="btn small" onclick="loadKits()">刷新</button></h3>
+      <p class="hint">仅显示本中心在库药盒的中性编号与批号，不含任何分组信息。</p>
+      <div id="lotSummary" class="lot-summary"></div>
+      <table>
+        <thead><tr><th>药盒号</th><th>批号</th></tr></thead>
+        <tbody id="kitRows"><tr><td colspan="2" class="muted">加载中…</td></tr></tbody>
+      </table>
+    </section>
+
+    <section class="card danger-card">
+      <h3>召回处置（本站） <button class="btn small" onclick="loadRecallItems()">刷新</button></h3>
+      <p class="hint">仅显示本站需处置的中性盒码与随机编码。扫描回收实物后才能取得替换资格；
+      替换凭证一次性有效，核销后从<strong>未被召回批次</strong>发放可替代包装。</p>
+      <table>
+        <thead><tr><th>召回单</th><th>盒码</th><th>随机号</th><th>阶段</th><th>替换凭证</th><th>操作</th></tr></thead>
+        <tbody id="recallRows"><tr><td colspan="6" class="muted">加载中…</td></tr></tbody>
+      </table>
+      <h4 style="margin-top:14px">核销替换凭证</h4>
+      <div class="row">
+        <input id="rdVoucher" placeholder="替换凭证号，如 RV-0001">
+        <input id="rdKit" placeholder="药盒号（留空=系统从未被召回批次自动匹配）">
+        <button class="btn primary" onclick="doRedeem()">核销并发放替换</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <h3>药盒去向流水</h3>
+      <div class="row">
+        <input id="histKit" placeholder="输入药盒号查询发放/退回历史">
+        <button class="btn" onclick="loadHistory()">查询</button>
+      </div>
+      <table>
+        <thead><tr><th>时间</th><th>事件</th><th>药盒</th><th>批号</th><th>随机号</th><th>转批号</th><th>操作人</th><th>备注</th></tr></thead>
+        <tbody id="histRows"></tbody>
+      </table>
+    </section>
+  </main>`;
+  loadKits();
+  loadRecallItems();
+}
+
+async function loadRecallItems() {
+  try {
+    const list = await api('GET', '/api/pharmacy/recall-items');
+    el('recallRows').innerHTML = list.length ? list.map(it => `
+      <tr><td>${it.recall_no}</td><td><b>${it.kit_no}</b></td><td>${it.random_no || '—'}</td>
+      <td><span class="tag ${it.state === 'redeemed' ? 'green' : 'orange'}">${it.state_label}</span></td>
+      <td>${it.voucher_no ? it.voucher_no + '（' + it.voucher_status + '）' : '—'}</td>
+      <td>${recallAction(it)}</td></tr>`).join('')
+      : '<tr><td colspan="6" class="muted">本站暂无待处置召回项</td></tr>';
+  } catch (e) { toast(e.message, false); }
+}
+
+function recallAction(it) {
+  if (it.state === 'pending') return `
+    <button class="btn small primary" onclick="doRecover(${it.item_id}, '${it.kit_no}')">扫码回收</button>
+    <button class="btn small" onclick="doExempt(${it.item_id})">登记医疗豁免</button>`;
+  if (it.state === 'recovered')
+    return `<button class="btn small primary" onclick="doVoucher(${it.item_id})">生成替换凭证</button>`;
+  if (it.state === 'replaceable')
+    return `<button class="btn small" onclick="el('rdVoucher').value='${it.voucher_no}'">填入凭证号</button>`;
+  return '—';
+}
+
+async function doRecover(itemId, kitNo) {
+  const kit_no = prompt(`请扫描/输入回收实物盒码（应为 ${kitNo}）：`, kitNo);
+  if (!kit_no) return;
+  try {
+    await api('POST', `/api/pharmacy/recall-items/${itemId}/recover`, { kit_no: kit_no.trim() });
+    toast('回收已登记，药盒已冻结隔离', true);
+    loadRecallItems(); loadKits();
+  } catch (e) { toast(e.message, false); }
+}
+
+async function doExempt(itemId) {
+  const reason = prompt('医疗豁免原因（必填，需风险控制复核）：');
+  if (!reason) return;
+  try {
+    await api('POST', `/api/pharmacy/recall-items/${itemId}/exempt`, { reason });
+    toast('豁免已登记，等待风险控制复核', true);
+    loadRecallItems();
+  } catch (e) { toast(e.message, false); }
+}
+
+async function doVoucher(itemId) {
+  try {
+    const r = await api('POST', `/api/pharmacy/recall-items/${itemId}/voucher`);
+    toast(`一次性替换凭证已签发：${r.voucher_no}`, true);
+    loadRecallItems();
+  } catch (e) { toast(e.message, false); }
+}
+
+async function doRedeem() {
+  const voucher_no = el('rdVoucher').value.trim();
+  if (!voucher_no) return toast('请填写替换凭证号', false);
+  try {
+    const body = { voucher_no };
+    if (el('rdKit').value.trim()) body.kit_no = el('rdKit').value.trim();
+    const r = await api('POST', '/api/pharmacy/recall-vouchers/redeem', body);
+    toast(`凭证 ${r.voucher_no} 已核销，替换包装 ${r.kit_no} 已发放${r.already_redeemed ? '（此前已核销，同一结果）' : ''}`, true);
+    el('rdVoucher').value = el('rdKit').value = '';
+    loadRecallItems(); loadKits();
+  } catch (e) { toast(e.message, false); }
+}
+
+async function loadKits() {
+  try {
+    const r = await api('GET', '/api/pharmacy/kits');
+    el('lotSummary').innerHTML = r.lots.map(l =>
+      `<span class="tag">批号 ${l.lot_no}：在库 ${l.in_stock} 盒</span>`).join(' ') || '<span class="muted">无在库</span>';
+    el('kitRows').innerHTML = r.kits.length ? r.kits.map(k =>
+      `<tr><td>${k.kit_no}</td><td>${k.lot_no}</td></tr>`).join('')
+      : '<tr><td colspan="2" class="muted">暂无可领取药盒</td></tr>';
+  } catch (e) { toast(e.message, false); }
+}
+
+async function doDispense() {
+  try {
+    const body = { random_no: el('no').value.trim() };
+    if (el('kit').value.trim()) body.kit_no = el('kit').value.trim();
+    const r = await api('POST', '/api/pharmacy/dispense', body);
+    toast(`发放成功：${r.kit_no}（批号 ${r.lot_no}${r.lot_switched ? '，已转用兼容批号' : ''}）`, true);
+    el('no').value = el('kit').value = '';
+    loadKits();
+  } catch (e) { toast(e.message, false); }
+}
+
+async function doReturn() {
+  try {
+    const kit_no = el('retKit').value.trim();
+    const note = el('retNote').value.trim() || null;
+    await api('POST', '/api/pharmacy/return', { kit_no, note });
+    toast('退药成功，药盒状态：returned', true);
+    loadKits();
+  } catch (e) { toast(e.message, false); }
+}
+
+async function doRestock() {
+  try {
+    const kit_no = el('retKit').value.trim();
+    await api('POST', '/api/pharmacy/restock', { kit_no });
+    toast('已再入库，可再次发放', true);
+    loadKits();
+  } catch (e) { toast(e.message, false); }
+}
+
+async function loadHistory() {
+  const kit = el('histKit').value.trim();
+  if (!kit) return;
+  try {
+    const rows = await api('GET', '/api/pharmacy/kits/' + encodeURIComponent(kit) + '/history');
+    el('histRows').innerHTML = rows.length ? rows.map(r => `
+      <tr><td>${r.created_at}</td>
+      <td>${r.event_type === 'dispense' ? '<span class="tag green">发放</span>' : '<span class="tag orange">退回</span>'}</td>
+      <td>${r.kit_no}</td><td>${r.lot_no || ''}</td><td>${r.random_no || ''}</td>
+      <td>${r.lot_switched ? '是' : ''}</td><td>${r.actor}</td><td>${r.note || ''}</td></tr>`).join('')
+      : '<tr><td colspan="8" class="muted">无记录</td></tr>';
+  } catch (e) { toast(e.message, false); }
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>研究站点 · 冷链接收结论</title>
+<link rel="stylesheet" href="/static/shared/style.css">
+</head>
+<body>
+<div class="topbar">
+  <div class="brand">🧊 冷链接收结论（只读）<span class="role-tag role-site">研究站点</span></div>
+  <div class="who"><span id="who"></span><button class="small ghost" id="logout">退出</button></div>
+</div>
+<div class="container" style="max-width:860px">
+  <div class="card">
+    <h3>按中性运单号查询</h3>
+    <div class="row">
+      <input id="q" placeholder="输入运单号，如 WB-1001" style="max-width:320px">
+      <button id="btn">查询</button>
+    </div>
+    <p id="one" style="margin-top:14px"></p>
+  </div>
+  <div class="card">
+    <h3>全部运单接收结论</h3>
+    <p class="muted">本页面仅显示中性运单号、是否可接收与简化原因；不包含温度明细、规则参数、片段或任何药品相关信息。</p>
+    <table>
+      <thead><tr><th>中性运单号</th><th>是否可接收</th><th>简化原因</th></tr></thead>
+      <tbody id="tb"></tbody>
+    </table>
+  </div>
+</div>
+<script type="module">
+import { api, requireRole, esc, toast } from '/static/shared/api.js';
+const me = await requireRole('site');
+document.getElementById('who').textContent = me.display;
+document.getElementById('logout').onclick = () => { sessionStorage.clear(); location.href = '/static/index.html'; };
+
+function cellReceivable(v) {
+  if (v === true) return '<span class="badge b-accept">可接收</span>';
+  if (v === false) return '<span class="badge b-quarantine">不可接收</span>';
+  return '<span class="badge b-pending">结论未出</span>';
+}
+function rowHtml(r) {
+  return `<tr><td class="mono">${esc(r.waybill_no)}</td><td>${cellReceivable(r.receivable)}</td><td>${esc(r.reason)}</td></tr>`;
+}
+
+async function load() {
+  const list = await api('GET', '/api/site/waybills');
+  document.getElementById('tb').innerHTML = list.map(rowHtml).join('');
+}
+async function query() {
+  const no = document.getElementById('q').value.trim();
+  if (!no) return;
+  try {
+    const r = await api('GET', '/api/site/waybills/' + encodeURIComponent(no));
+    document.getElementById('one').innerHTML =
+      `<table><tbody>${rowHtml(r)}</tbody></table>`;
+  } catch (e) { toast(e.message, 'error'); }
+}
+document.getElementById('btn').onclick = query;
+document.getElementById('q').onkeydown = (e) => e.key === 'Enter' && query();
+load();
+</script>
+</body>
+</html>

@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>质量审核 · 冷链证据</title>
+<link rel="stylesheet" href="/static/shared/style.css">
+</head>
+<body>
+<div class="topbar">
+  <div class="brand">🧊 冷链证据 · 质量管理员审核<span class="role-tag role-quality">质量管理员</span></div>
+  <div class="who"><span id="who"></span><button class="small ghost" id="logout">退出</button></div>
+</div>
+<div class="container">
+  <div class="card">
+    <h3>运单处置台</h3>
+    <div class="scroll">
+      <table id="w-table">
+        <thead><tr>
+          <th>运单号</th><th>传感器</th><th>规则版本</th><th>片段</th><th>缺口</th>
+          <th>超限</th><th>建议</th><th>状态</th><th>操作</th>
+        </tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="card" id="detail-card" style="display:none">
+    <h3>运单完整证据 <span id="d-title"></span></h3>
+    <div id="d-body"></div>
+    <div id="d-actions" style="margin-top:14px"></div>
+  </div>
+
+  <div class="grid2">
+    <div class="card">
+      <h3>撤销复核队列（必须异名复核）</h3>
+      <div id="rev-queue"></div>
+    </div>
+    <div class="card">
+      <h3>温控规则版本</h3>
+      <p class="muted">发布新版本只影响之后创建的新运单；老运单永久使用创建时固化的快照。</p>
+      <div class="row">
+        <input id="r-version" placeholder="版本号，如 RV-2026-10-01">
+        <input id="r-min" type="number" step="0.1" placeholder="下限℃" style="max-width:90px">
+        <input id="r-max" type="number" step="0.1" placeholder="上限℃" style="max-width:90px">
+        <input id="r-breach" type="number" placeholder="连续越界秒" style="max-width:110px">
+        <input id="r-offset" type="number" step="0.1" placeholder="校准偏移℃" style="max-width:100px">
+        <button id="r-publish">发布并激活</button>
+      </div>
+      <div class="scroll" style="margin-top:10px"><table id="r-table"></table></div>
+    </div>
+  </div>
+
+  <div class="grid2">
+    <div class="card">
+      <h3>凭据库外重算校验</h3>
+      <p class="muted">把凭据 JSON（含签名）贴入，系统将只依赖模块公钥：验签 → 重算片段集合摘要 →
+        用凭据内规则重跑缺口/越界 → 重算决定链摘要。数据库之外可用。</p>
+      <textarea id="v-env" placeholder='粘贴 {"algorithm":..., "payload":..., "signature":...}'></textarea>
+      <div class="row">
+        <button id="v-run">校验</button>
+        <a href="/api/public-key" target="_blank"><button type="button" class="ghost">查看模块公钥</button></a>
+      </div>
+      <pre id="v-out" class="json" style="display:none"></pre>
+    </div>
+    <div class="card">
+      <h3>审计日志 <button class="small ghost" id="a-refresh">刷新</button></h3>
+      <div class="scroll" style="max-height:320px"><table id="a-table">
+        <thead><tr><th>时间</th><th>账号</th><th>动作</th><th>明细</th></tr></thead><tbody></tbody>
+      </table></div>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+import { api, requireRole, esc, STATE_LABEL, badgeClass, fmt, toast } from '/static/shared/api.js';
+import { renderDetail } from '/static/shared/detail.js';
+
+const me = await requireRole('quality');
+document.getElementById('who').textContent = me.display;
+document.getElementById('logout').onclick = () => { sessionStorage.clear(); location.href = '/static/index.html'; };
+
+async function loadList() {
+  const list = await api('GET', '/api/quality/waybills');
+  document.querySelector('#w-table tbody').innerHTML = list.map((w) => `
+    <tr class="clickable" data-id="${w.id}">
+      <td class="mono">${esc(w.waybill_no)}</td>
+      <td class="mono">${esc(w.sensor_no)}</td>
+      <td>${esc(w.rule_snapshot.version)}</td>
+      <td>${w.n_fragments}/${w.analysis.n_points}</td>
+      <td>${w.analysis.n_gaps ? `<span class="tag tag-gap">${w.analysis.n_gaps}</span>` : '<span class="tag tag-ok">0</span>'}</td>
+      <td>${w.analysis.n_breaches ? `<span class="tag tag-breach">${w.analysis.n_breaches}</span>` : '<span class="tag tag-ok">0</span>'}</td>
+      <td>${w.analysis.suggested_disposition === null ? '<span class="muted">待补传</span>'
+        : `<span class="tag ${w.analysis.suggested_disposition === 'accept' ? 'tag-ok' : 'tag-breach'}">${w.analysis.suggested_disposition === 'accept' ? '接收' : '隔离'}</span>`}</td>
+      <td><span class="${badgeClass(w.state)}">${STATE_LABEL[w.state]}</span></td>
+      <td><button class="small" data-view="${w.id}">审核</button></td>
+    </tr>`).join('');
+  document.querySelectorAll('#w-table [data-view]').forEach((b) =>
+    b.onclick = (e) => { e.stopPropagation(); show(b.dataset.view); });
+}
+
+async function show(id) {
+  const d = await api('GET', '/api/quality/waybills/' + id);
+  document.getElementById('detail-card').style.display = '';
+  document.getElementById('d-title').innerHTML =
+    `<span class="mono">${esc(d.waybill_no)}</span> <span class="${badgeClass(d.state)}">${STATE_LABEL[d.state]}</span>`;
+  renderDetail(document.getElementById('d-body'), d, { role: 'quality' });
+  renderActions(d);
+  document.getElementById('detail-card').scrollIntoView({ behavior: 'smooth' });
+}
+
+function renderActions(d) {
+  const box = document.getElementById('d-actions');
+  let html = '';
+  if (d.state === 'ready' || d.state === 'revoked') {
+    const rev = d.state === 'revoked';
+    html = `<div class="row spread">
+      <div class="row">
+        <button id="do-accept">${rev ? '重新确认：可接收' : '确认：可接收'}</button>
+        <button class="danger" id="do-quar">${rev ? '重新确认：隔离' : '确认：隔离'}</button>
+      </div>
+      <input id="do-reason" placeholder="处置理由（必填，中性）" style="max-width:420px"
+        value="${rev ? '撤销复核通过后重新判定：' : ''}">
+    </div>`;
+  } else if (d.state === 'decided') {
+    html = `<div class="row spread">
+      <button class="warn" id="do-cred">导出不可变处置凭据</button>
+      <div class="row">
+        <input id="rev-reason" placeholder="申请撤销的理由（必填，将由另一名质量管理员复核）" style="max-width:420px">
+        <button class="ghost" id="do-revoke">申请撤销最终决定</button>
+      </div>
+    </div>`;
+  } else if (d.state === 'revoking') {
+    html = `<p class="muted">撤销复核处理中，不能产生新的最终决定；请在下方复核队列中由另一人处理。</p>`;
+  } else {
+    html = `<p class="muted">时间线未齐（存在缺口/冲突）：只能显示待补传，不能形成处置建议。</p>`;
+  }
+  box.innerHTML = html;
+  const byId = (i) => document.getElementById(i);
+  byId('do-accept')?.addEventListener('click', () => decide(d, 'accept'));
+  byId('do-quar')?.addEventListener('click', () => decide(d, 'quarantine'));
+  byId('do-revoke')?.addEventListener('click', async () => {
+    const reason = byId('rev-reason').value.trim();
+    if (!reason) return toast('撤销理由必填', 'error');
+    try {
+      const r = await api('POST', `/api/quality/waybills/${d.id}/revoke`, { reason });
+      toast(r.idempotent ? '已存在待复核的撤销申请（幂等返回原申请）' : '撤销申请已提交，等待另一名质量管理员复核', 'ok');
+      loadAll();
+    } catch (e) { toast(e.message, 'error'); }
+  });
+  byId('do-cred')?.addEventListener('click', async () => {
+    try {
+      const r = await api('POST', `/api/quality/waybills/${d.id}/credential`, {});
+      const blob = new Blob([JSON.stringify(r.credential, null, 2)], { type: 'application/json' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = r.credential.payload.cred_no + '-' + d.waybill_no + '.json';
+      a.click();
+      toast((r.idempotent ? '凭据此前已签发（幂等返回原件）：' : '凭据已签发：') +
+        r.credential.payload.cred_no, 'ok');
+      show(d.id);
+    } catch (e) { toast(e.message, 'error'); }
+  });
+}
+
+async function decide(d, disposition) {
+  const reason = document.getElementById('do-reason').value.trim();
+  if (!reason) return toast('处置理由必填', 'error');
+  try {
+    const r = await api('POST', `/api/quality/waybills/${d.id}/confirm`, { disposition, reason });
+    toast(r.idempotent ? '并发/重复确认：只产生一个决定，已返回原结果。'
+      : `最终处置已记录：${disposition === 'accept' ? '可接收' : '隔离'}（r${r.decision.revision}）`, 'ok');
+    loadAll();
+    show(d.id);
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+async function loadRevQueue() {
+  const list = await api('GET', '/api/quality/revocations');
+  document.getElementById('rev-queue').innerHTML = list.length ? `<table>
+    <thead><tr><th>运单</th><th>版本</th><th>申请人</th><th>理由</th><th>操作</th></tr></thead><tbody>
+    ${list.map((r) => `<tr>
+      <td class="mono">${esc(r.waybill_no)}</td><td>r${r.revision}</td><td>${esc(r.requested_by)}</td>
+      <td>${esc(r.reason)}</td>
+      <td>${r.requested_by === me.username
+        ? '<span class="muted">须由另一名质量管理员复核</span>'
+        : `<button class="small" data-approve="${r.id}">批准撤销</button>
+           <button class="small ghost" data-reject="${r.id}">驳回</button>`}</td>
+    </tr>`).join('')}</tbody></table>` : '<p class="muted">没有待复核的撤销申请。</p>';
+  document.querySelectorAll('[data-approve]').forEach((b) => b.onclick = () => review(b.dataset.approve, true));
+  document.querySelectorAll('[data-reject]').forEach((b) => b.onclick = () => review(b.dataset.reject, false));
+}
+
+async function review(id, approve) {
+  const note = prompt(reviewNote(approve), '');
+  if (note === null) return;
+  try {
+    const r = await api('POST', `/api/quality/revocations/${id}/review`, { approve, note });
+    toast(r.idempotent ? '该申请已被处理（幂等返回）' : (approve ? '撤销已生效，可重新处置；历史版本保留。' : '撤销申请已驳回，原决定恢复有效。'), 'ok');
+    loadAll();
+  } catch (e) { toast(e.message, 'error'); }
+}
+const reviewNote = (approve) => approve ? '复核意见（批准撤销）：' : '驳回原因：';
+
+async function loadRules() {
+  const list = await api('GET', '/api/quality/rules');
+  document.getElementById('r-table').innerHTML =
+    `<thead><tr><th>版本</th><th>区间℃</th><th>越界限(秒)</th><th>偏移℃</th><th>状态</th></tr></thead><tbody>
+    ${list.map((r) => `<tr><td>${esc(r.version)}</td><td>[${r.temp_min_c}, ${r.temp_max_c}]</td>
+      <td>${r.max_breach_sec}</td><td>${r.calib_offset_c}</td>
+      <td>${r.active ? '<span class="tag tag-ok">当前版本</span>' : '<span class="muted">历史快照</span>'}</td></tr>`).join('')}
+    </tbody>`;
+}
+document.getElementById('r-publish').onclick = async () => {
+  try {
+    await api('POST', '/api/quality/rules', {
+      version: document.getElementById('r-version').value.trim(),
+      temp_min_c: Number(document.getElementById('r-min').value),
+      temp_max_c: Number(document.getElementById('r-max').value),
+      max_breach_sec: Number(document.getElementById('r-breach').value),
+      calib_offset_c: Number(document.getElementById('r-offset').value),
+      active: true,
+    });
+    toast('规则新版本已发布并激活；只影响新运单。', 'ok');
+    loadRules();
+  } catch (e) { toast(e.message, 'error'); }
+};
+
+document.getElementById('v-run').onclick = async () => {
+  let env;
+  try { env = JSON.parse(document.getElementById('v-env').value); }
+  catch { return toast('凭据不是合法 JSON', 'error'); }
+  const r = await api('POST', '/api/verify-credential', { envelope: env });
+  const out = document.getElementById('v-out');
+  out.style.display = '';
+  out.textContent = JSON.stringify(r, null, 2);
+  toast(r.ok ? '校验通过：片段集合、规则版本与最终决定均未被改动。' : '校验未通过：' + r.reason,
+    r.ok ? 'ok' : 'error');
+};
+
+async function loadAudit() {
+  const list = await api('GET', '/api/quality/audit?limit=150');
+  document.querySelector('#a-table tbody').innerHTML = list.map((r) => `
+    <tr><td class="mono">${fmt(r.created_at)}</td><td>${esc(r.actor)}</td>
+    <td>${esc(r.action)}</td><td class="mono" style="max-width:340px;word-break:break-all">${esc(JSON.stringify(r.detail))}</td></tr>`).join('');
+}
+document.getElementById('a-refresh').onclick = loadAudit;
+
+function loadAll() { loadList(); loadRevQueue(); loadAudit(); }
+loadAll();
+loadRules();
+</script>
+</body>
+</html>

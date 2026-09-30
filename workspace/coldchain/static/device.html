@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>设备上传 · 冷链证据</title>
+<link rel="stylesheet" href="/static/shared/style.css">
+</head>
+<body>
+<div class="topbar">
+  <div class="brand">🧊 冷链证据 · 设备上传<span class="role-tag role-device">运输设备</span></div>
+  <div class="who"><span id="who"></span><button class="small ghost" id="logout">退出</button></div>
+</div>
+<div class="container">
+  <div class="grid2">
+    <div class="card">
+      <h3>① 创建运单（创建即固化温控规则版本）</h3>
+      <label>中性运单号</label>
+      <input id="w-no" placeholder="如 WB-1005（不得含药品/分组/批号信息）">
+      <label>传感器编号</label>
+      <input id="w-sensor" placeholder="如 SN-A500">
+      <label>采样区间起 / 止（ISO，UTC）</label>
+      <div class="row">
+        <input id="w-start" placeholder="2026-09-27T08:00:00Z">
+        <input id="w-end" placeholder="2026-09-27T09:00:00Z">
+      </div>
+      <button id="w-create">创建 / 幂等重试</button>
+    </div>
+    <div class="card">
+      <h3>② 上传温度片段（支持离线乱序补传、重复重传）</h3>
+      <label>运单号</label>
+      <input id="f-waybill" placeholder="WB-1003">
+      <label>片段 JSON</label>
+      <textarea id="f-body" style="min-height:150px" placeholder='{"fragment_no":"F2","sensor_no":"可选，会与运单核对","interval_start":"2026-09-27T08:20:00Z","interval_end":"2026-09-27T09:00:00Z","points":[["2026-09-27T08:20:00Z",5.1],["2026-09-27T08:21:00Z",5.3]]}'></textarea>
+      <div class="row">
+        <button id="f-upload">上传片段</button>
+        <button class="ghost" id="f-example">填入示例</button>
+      </div>
+      <p class="muted" id="f-hint">同标识同正文重传幂等返回原结果；同标识不同正文、重叠点冲突、超出采样区间都会被拒绝。</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>我的运单时间线</h3>
+    <div class="scroll">
+      <table id="w-table">
+        <thead><tr>
+          <th>运单号</th><th>传感器</th><th>采样区间</th><th>规则版本</th>
+          <th>片段/点数</th><th>缺口</th><th>越界</th><th>状态</th><th></th>
+        </tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="card" id="detail-card" style="display:none">
+    <h3>运单明细 <span id="d-title"></span></h3>
+    <div id="d-body"></div>
+  </div>
+</div>
+
+<script type="module">
+import { api, requireRole, esc, STATE_LABEL, badgeClass, fmt, toast } from '/static/shared/api.js';
+import { renderDetail } from '/static/shared/detail.js';
+
+const me = await requireRole('device');
+document.getElementById('who').textContent = me.display;
+document.getElementById('logout').onclick = () => { sessionStorage.clear(); location.href = '/static/index.html'; };
+
+async function loadList() {
+  const list = await api('GET', '/api/device/waybills');
+  const tb = document.querySelector('#w-table tbody');
+  tb.innerHTML = list.map((w) => `
+    <tr class="clickable" data-id="${esc(w.waybill_no)}">
+      <td class="mono">${esc(w.waybill_no)}</td>
+      <td class="mono">${esc(w.sensor_no)}</td>
+      <td class="mono">${fmt(w.expected_start)}<br>${fmt(w.expected_end)}</td>
+      <td>${esc(w.rule_snapshot.version)}</td>
+      <td>${w.n_fragments} / ${w.analysis.n_points}</td>
+      <td>${w.analysis.n_gaps ? `<span class="tag tag-gap">${w.analysis.n_gaps} 处</span>` : '<span class="tag tag-ok">无</span>'}</td>
+      <td>${w.analysis.n_breaches ? `<span class="tag tag-breach">${w.analysis.n_breaches} 次超限</span>` : '<span class="tag tag-ok">未超限</span>'}</td>
+      <td><span class="${badgeClass(w.state)}">${STATE_LABEL[w.state] || w.state}</span></td>
+      <td><button class="small" data-view="${esc(w.waybill_no)}">查看</button></td>
+    </tr>`).join('');
+  tb.querySelectorAll('[data-view]').forEach((b) => b.onclick = (e) => {
+    e.stopPropagation();
+    show(b.dataset.view);
+  });
+}
+
+async function show(no) {
+  const d = await api('GET', '/api/device/waybills/' + encodeURIComponent(no));
+  document.getElementById('detail-card').style.display = '';
+  document.getElementById('d-title').innerHTML =
+    `<span class="mono">${esc(d.waybill_no)}</span> <span class="${badgeClass(d.state)}">${STATE_LABEL[d.state]}</span>`;
+  renderDetail(document.getElementById('d-body'), d, { role: 'device' });
+  document.getElementById('detail-card').scrollIntoView({ behavior: 'smooth' });
+}
+
+document.getElementById('w-create').onclick = async () => {
+  try {
+    const body = {
+      waybill_no: document.getElementById('w-no').value.trim(),
+      sensor_no: document.getElementById('w-sensor').value.trim(),
+      expected_start: document.getElementById('w-start').value.trim(),
+      expected_end: document.getElementById('w-end').value.trim(),
+    };
+    await api('POST', '/api/device/waybills', body);
+    toast('运单已创建（温控规则版本已固化）', 'ok');
+    loadList();
+  } catch (e) { toast(e.message, 'error'); }
+};
+
+document.getElementById('f-example').onclick = () => {
+  document.getElementById('f-waybill').value = 'WB-1003';
+  document.getElementById('f-body').value = JSON.stringify({
+    fragment_no: 'F2',
+    interval_start: '2026-09-27T08:20:00Z',
+    interval_end: '2026-09-27T09:00:00Z',
+    points: [['2026-09-27T08:20:00Z', 5.0], ['2026-09-27T08:30:00Z', 5.2],
+      ['2026-09-27T08:45:00Z', 5.1], ['2026-09-27T09:00:00Z', 5.0]],
+  }, null, 2);
+};
+
+document.getElementById('f-upload').onclick = async () => {
+  const no = document.getElementById('f-waybill').value.trim();
+  if (!no) return toast('请填写运单号', 'error');
+  let body;
+  try { body = JSON.parse(document.getElementById('f-body').value); }
+  catch { return toast('片段 JSON 无法解析', 'error'); }
+  try {
+    const r = await api('POST', `/api/device/waybills/${encodeURIComponent(no)}/fragments`, body);
+    toast((r.idempotent ? '幂等：该片段已存在，返回原结果。' : '片段已接受。') +
+      (r.waybill ? ` 当前状态：${STATE_LABEL[r.waybill.state]}` : ''), 'ok');
+    loadList();
+  } catch (e) {
+    let extra = '';
+    if (e.payload?.conflicts?.length) {
+      extra = '\n冲突点：\n' + e.payload.conflicts.slice(0, 5).map((c) =>
+        `${new Date(c.t_ms).toISOString()} 既有=${c.existing_temp_c}℃ 新传=${c.incoming_temp_c}℃`).join('\n');
+    }
+    toast(e.message + extra, 'error');
+  }
+};
+
+loadList();
+</script>
+</body>
+</html>

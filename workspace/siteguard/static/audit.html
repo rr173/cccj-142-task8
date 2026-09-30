@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>中性审计</title>
+<link rel="stylesheet" href="/static/shared/style.css">
+</head>
+<body>
+<header>
+  <h1>中性审计视图</h1>
+  <nav><a href="/">首页</a></nav>
+  <span class="spacer"></span>
+  <span class="who" id="who"></span>
+  <button class="secondary" id="logoutBtn" style="padding:4px 10px">退出</button>
+</header>
+<main>
+  <div class="card">
+    <h2>事件流水（仅中性分区与编号）</h2>
+    <p class="muted">
+      本页不显示站点编码、管理员账号、设备标识明文或正文摘要原文；
+      站点仅以分区 <span class="mono">P-1 / P-2</span> 表示，实体仅以
+      <span class="mono">D-/C-/R-/RC-</span> 中性编号表示。
+    </p>
+    <div class="row">
+      <div class="field"><label>事件类型过滤</label>
+        <select id="typeFilter">
+          <option value="">全部</option>
+        </select>
+      </div>
+      <div class="field"><label>条数</label>
+        <input id="limit" type="number" value="200" min="1" max="2000" style="min-width:120px">
+      </div>
+      <button id="loadBtn">查询</button>
+    </div>
+    <div id="box" style="margin-top:10px"></div>
+  </div>
+</main>
+<script src="/static/shared/api.js"></script>
+<script>
+const $ = (id) => document.getElementById(id);
+const token = SG.getToken();
+const id = SG.identity();
+if (!token || !id || id.role !== 'auditor') location.href = '/';
+$('who').textContent = id.display;
+$('logoutBtn').onclick = async () => {
+  try { await SG.api('POST', '/api/logout', {}, token); } catch {}
+  SG.clearSession(); location.href = '/';
+};
+
+const TYPES = ['registerCodeIssued', 'terminalRegistered', 'challengeIssued',
+  'actionSigned', 'rotationPrepared', 'certificateRotated', 'deviceQuarantined',
+  'requestRejected'];
+TYPES.forEach((t) => $('typeFilter').add(new Option(t, t)));
+
+async function load() {
+  const params = new URLSearchParams({ limit: $('limit').value });
+  if ($('typeFilter').value) params.set('type', $('typeFilter').value);
+  const rows = await SG.api('GET', '/api/audit?' + params.toString(), undefined, token);
+  $('box').innerHTML = '<table><thead><tr>' +
+    '<th>序号</th><th>时刻</th><th>事件</th><th>中性分区</th><th>编号引用</th>' +
+    '</tr></thead><tbody>' +
+    rows.map((a) => `<tr>
+      <td class="mono">${a.seq}</td><td>${a.at}</td>
+      <td><span class="tag neutral">${a.type}</span></td>
+      <td class="mono">${a.partition ?? '—'}</td>
+      <td class="mono">${Object.entries(a.refs ?? {}).map(([k, v]) =>
+        `${k}=${SG.escapeHtml(String(v))}`).join('<br>')}</td>
+    </tr>`).join('') + '</tbody></table>';
+}
+$('loadBtn').onclick = () => load().catch((e) => alert(`[${e.code}] ${e.message}`));
+load();
+</script>
+</body>
+</html>

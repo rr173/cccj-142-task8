@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>平台事件出站队列 · 安全管理员</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div id="app"></div>
+<div id="toast" class="toast"></div>
+<script src="/static/app.js"></script>
+<script>
+const session = guard('safety');
+
+const KIND_LABEL = {
+  enrolled: '入组', dispensed: '发药', returned: '退药',
+  recall_published: '召回发布', unblinded: '揭盲',
+};
+const STATUS_LABEL = { queued: '待投递', leased: '投递中(租约)', sent: '已送达', dead: '死信' };
+const STATUS_CLS = { queued: 'tag', leased: 'tag orange', sent: 'tag green', dead: 'tag red' };
+
+if (session) {
+  el('app').innerHTML = headerBlock('安全管理员 · 事件出站队列') + `
+  <main class="container">
+    <div class="row" style="margin-bottom:10px">
+      <a class="btn small" href="/static/safety.html">← 返回安全工作台</a>
+      <button class="btn small" onclick="loadAll()">全部刷新</button>
+    </div>
+
+    <section class="card">
+      <h3>① 登记订阅端点（按 事件种类 × 中心 × 角色 过滤）</h3>
+      <div class="row">
+        <input id="subName" placeholder="订阅名称，如 监查方-安全事件">
+        <input id="subUrl" placeholder="https:// 接收端点" style="flex:2">
+      </div>
+      <div class="row">
+        <input id="subKinds" placeholder="事件种类，逗号分隔（enrolled,dispensed,returned,recall_published,unblinded）；空=全部" style="flex:2">
+        <input id="subCenters" placeholder="中心，逗号分隔（01,02）；空=全部">
+        <input id="subRoles" placeholder="角色（investigator,pharmacy,safety）；空=全部">
+      </div>
+      <button class="btn primary" onclick="registerSub()">登记订阅</button>
+      <p class="hint">登记成功后<b>仅此一次</b>显示投递签名密钥（HMAC），请立即带外转交订阅方；之后任何页面/接口/日志都不再回显。</p>
+      <div id="newSecret"></div>
+    </section>
+
+    <section class="card">
+      <h3>② 订阅端点（暂停/恢复） <button class="btn small" onclick="loadSubs()">刷新</button></h3>
+      <table>
+        <thead><tr><th>ID</th><th>名称</th><th>端点</th><th>过滤</th><th>状态</th><th>配置版本</th>
+          <th>投递计数（待/投/达/死）</th><th>操作</th></tr></thead>
+        <tbody id="subRows"><tr><td colspan="8" class="muted">加载中…</td></tr></tbody>
+      </table>
+    </section>
+
+    <section class="card danger-card">
+      <h3>③ 死信队列（逐条重放） <button class="btn small" onclick="loadDead()">刷新</button></h3>
+      <p class="hint">重放复用原签名事件包（同一 event_id/序号/正文/签名），不改正文、不产生新业务事件；
+      重复重放已送达记录返回稳定结果。订阅方按事件标识去重。</p>
+      <table>
+        <thead><tr><th>投递ID</th><th>端点</th><th>事件序号/种类</th><th>尝试</th><th>重放次数</th><th>死信时间</th><th>操作</th></tr></thead>
+        <tbody id="deadRows"><tr><td colspan="7" class="muted">加载中…</td></tr></tbody>
+      </table>
+    </section>
+
+    <section class="card">
+      <h3>④ 投递审计 <button class="btn small" onclick="loadDeliveries()">刷新</button></h3>
+      <div class="row">
+        <select id="dlvStatus" onchange="loadDeliveries()">
+          <option value="">全部状态</option>
+          <option value="queued">待投递</option>
+          <option value="leased">投递中</option>
+          <option value="sent">已送达</option>
+          <option value="dead">死信</option>
+        </select>
+      </div>
+      <table>
+        <thead><tr><th>ID</th><th>端点</th><th>事件序号</th><th>种类</th><th>中心</th><th>状态</th>
+          <th>尝试</th><th>租约持有者</th><th>下次尝试/送达</th></tr></thead>
+        <tbody id="dlvRows"></tbody>
+      </table>
+      <div id="dlvDetail"></div>
+    </section>
+
+    <section class="card">
+      <h3>⑤ 签名验证材料 / 密钥轮换 / 事件完整性</h3>
+      <div class="row">
+        <button class="btn" onclick="loadMaterials()">查看公布的验证材料</button>
+        <button class="btn warning" onclick="rotateKey()">轮换签发密钥</button>
+        <button class="btn" onclick="loadIntegrity()">事件链完整性巡检</button>
+      </div>
+      <pre id="materials" class="materials-box">点击"查看"获取公钥集与链锚点（供库外核对）。</pre>
+      <div id="integrity"></div>
+      <p class="hint">验证材料含全部公钥（含已轮换版本）与当前链锚点；库外可用
+      <code>python -m rts.verify_events event.json --materials materials.json --chain</code>
+      核对序号连续性、正文摘要、签发版本与 Ed25519 签名。</p>
+    </section>
+  </main>`;
+  loadAll();
+}
+
+async function loadAll() { await Promise.all([loadSubs(), loadDead(), loadDeliveries()]); }
+
+function filterText(s) {
+  if (!s) return '<span class="muted">全部</span>';
+  const kinds = (s.kind_filter || []).map(k => KIND_LABEL[k] || k).join(',');
+  const centers = (s.center_filter || []).join(',');
+  const roles = (s.role_filter || []).join(',');
+  const parts = [];
+  if (kinds) parts.push('种类:' + kinds);
+  if (centers) parts.push('中心:' + centers);
+  if (roles) parts.push('角色:' + roles);
+  return parts.join('；') || '<span class="muted">全部</span>';
+}
+
+async function registerSub() {
+  const body = {
+    name: el('subName').value.trim(),
+    endpoint_url: el('subUrl').value.trim(),
+    kinds: el('subKinds').value.split(',').map(s => s.trim()).filter(Boolean),
+    centers: el('subCenters').value.split(',').map(s => s.trim()).filter(Boolean),
+    roles: el('subRoles').value.split(',').map(s => s.trim()).filter(Boolean),
+  };
+  try {
+    const r = await api('POST', '/api/safety/event-subscriptions', body);
+    if (r.duplicate) {
+      toast('该端点已订阅（重复订阅返回原配置，未重复登记）', false);
+    } else {
+      el('newSecret').innerHTML =
+        `<p class="secret-box">订阅 ID ${r.id} 的投递 HMAC 密钥（仅显示一次）：<code>${r.secret}</code></p>`;
+      toast('订阅已登记', true);
+    }
+    el('subName').value = el('subUrl').value = el('subKinds').value =
+      el('subCenters').value = el('subRoles').value = '';
+    loadSubs();
+  } catch (e) { toast(e.message, false); }
+}
+
+async function loadSubs() {
+  try {
+    const list = await api('GET', '/api/safety/event-subscriptions');
+    el('subRows').innerHTML = list.length ? list.map(s => `
+      <tr>
+        <td>${s.id}</td><td>${s.name}</td><td style="max-width:260px;word-break:break-all">${s.endpoint_url}</td>
+        <td style="font-size:12px">${filterText(s)}</td>
+        <td>${s.status === 'active' ? '<span class="tag green">启用</span>' : '<span class="tag orange">已停用</span>'}</td>
+        <td>v${s.version}</td>
+        <td>${s.deliveries.queued}/${s.deliveries.leased}/${s.deliveries.sent}/${s.deliveries.dead}</td>
+        <td>${s.status === 'active'
+            ? `<button class="btn small warning" onclick="pauseSub(${s.id})">停用</button>`
+            : `<button class="btn small" onclick="resumeSub(${s.id})">恢复</button>`}</td>
+      </tr>`).join('')
+      : '<tr><td colspan="8" class="muted">暂无订阅</td></tr>';
+  } catch (e) { toast(e.message, false); }
+}
+
+async function pauseSub(id) {
+  try { await api('POST', `/api/safety/event-subscriptions/${id}/pause`); toast('已停用端点', true); loadAll(); }
+  catch (e) { toast(e.message, false); }
+}
+async function resumeSub(id) {
+  try { await api('POST', `/api/safety/event-subscriptions/${id}/resume`); toast('已恢复端点', true); loadAll(); }
+  catch (e) { toast(e.message, false); }
+}
+
+async function loadDead() {
+  try {
+    const list = await api('GET', '/api/safety/event-deliveries?status=dead');
+    el('deadRows').innerHTML = list.length ? list.map(d => `
+      <tr>
+        <td>${d.id}</td><td style="max-width:220px;word-break:break-all">${d.endpoint_url}</td>
+        <td>#${d.event_seq} ${KIND_LABEL[d.kind] || d.kind}（${d.center_code || '平台'}）</td>
+        <td>${d.attempts}/${d.max_attempts}</td><td>${d.replay_count}</td><td>${d.dead_at}</td>
+        <td><button class="btn small danger" onclick="replay(${d.id})">重放</button></td>
+      </tr>`).join('')
+      : '<tr><td colspan="7" class="muted">没有死信记录</td></tr>';
+  } catch (e) { toast(e.message, false); }
+}
+
+async function replay(id) {
+  if (!confirm(`确认重放投递 #${id}？将复用原事件包，不改变正文、不产生新事件。`)) return;
+  try {
+    const r = await api('POST', `/api/safety/event-deliveries/${id}/replay`);
+    if (r.duplicate) toast('该记录已送达（重复重放，返回稳定结果）', true);
+    else if (r.status === 'sent') toast('重放成功，已送达', true);
+    else toast('重放已重新入队，状态：' + r.status, true);
+    loadAll();
+  } catch (e) { toast(e.message + (e.code ? '（' + e.code + '）' : ''), false); }
+}
+
+async function loadDeliveries() {
+  const st = el('dlvStatus') ? el('dlvStatus').value : '';
+  try {
+    const list = await api('GET', '/api/safety/event-deliveries' + (st ? '?status=' + st : ''));
+    el('dlvRows').innerHTML = list.length ? list.map(d => `
+      <tr style="cursor:pointer" onclick="loadDelivery(${d.id})">
+        <td>${d.id}</td><td style="max-width:200px;word-break:break-all">${d.subscription_name}</td>
+        <td>#${d.event_seq}</td><td>${KIND_LABEL[d.kind] || d.kind}</td>
+        <td>${d.center_code || '平台'}</td>
+        <td><span class="${STATUS_CLS[d.status]}">${STATUS_LABEL[d.status]}</span></td>
+        <td>${d.attempts}</td><td>${d.lease_owner ? d.lease_owner.slice(0, 10) + '…' : '—'}</td>
+        <td>${d.sent_at || d.next_attempt_at}</td>
+      </tr>`).join('')
+      : '<tr><td colspan="9" class="muted">暂无投递记录</td></tr>';
+  } catch (e) { toast(e.message, false); }
+}
+
+async function loadDelivery(id) {
+  try {
+    const d = await api('GET', '/api/safety/event-deliveries/' + id);
+    const logs = (d.attempts_log || []).map(a => `
+      <tr><td>${a.attempt_no}</td><td>${a.worker.slice(0, 12)}…</td>
+        <td>${a.result}</td><td>${a.http_status || '—'}</td>
+        <td>${a.error_code || '—'}</td><td>${a.created_at}</td></tr>`).join('');
+    el('dlvDetail').innerHTML = `<h4 style="margin-top:14px">投递 #${d.id} 重试流水</h4>
+      <table><thead><tr><th>第n次</th><th>worker</th><th>结果</th><th>HTTP</th><th>错误码</th><th>时间</th></tr></thead>
+      <tbody>${logs || '<tr><td colspan="6" class="muted">无</td></tr>'}</tbody></table>
+      <p class="hint">事件 #${d.event_seq} 标识 <code>${d.event_id}</code>，签发版本 ${d.event_sub_version}，
+      签发密钥 <code>${(d.sign_key_id || '').slice(0, 12)}…</code>。日志不含事件正文与订阅密钥。</p>`;
+  } catch (e) { toast(e.message, false); }
+}
+
+async function loadMaterials() {
+  try {
+    const m = await api('GET', '/api/verify-materials');
+    el('materials').textContent = JSON.stringify(m, null, 2);
+  } catch (e) { toast(e.message, false); }
+}
+
+async function rotateKey() {
+  if (!confirm('确认轮换事件签发密钥？旧公钥保留用于核对历史事件，新事件用新密钥签发。')) return;
+  try {
+    const r = await api('POST', '/api/safety/rotate-signing-key');
+    toast('已轮换到密钥版本 ' + r.version + '（' + r.key_id.slice(0, 10) + '…）', true);
+    loadMaterials();
+  } catch (e) { toast(e.message, false); }
+}
+
+async function loadIntegrity() {
+  try {
+    const r = await api('GET', '/api/safety/event-integrity');
+    el('integrity').innerHTML = r.ok
+      ? `<p class="tag green">事件链完整：${r.events} 个事件，序号/哈希链/正文摘要/签名全部通过</p>`
+      : `<div class="tag red">发现问题：<pre>${JSON.stringify(r.problems, null, 2)}</pre></div>`;
+  } catch (e) { toast(e.message, false); }
+}
+</script>
+</body>
+</html>

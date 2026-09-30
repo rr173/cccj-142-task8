@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>安全管理员工作台</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div id="app"></div>
+<div id="toast" class="toast"></div>
+<script src="/static/app.js"></script>
+<script>
+const session = guard('safety');
+if (session) {
+  el('app').innerHTML = headerBlock('安全管理员') + `
+  <main class="container">
+    <section class="card">
+      <h3>试验状态</h3>
+      <div id="status" class="lot-summary">加载中…</div>
+      <div class="row">
+        <button class="btn warning" onclick="lockData()">锁定数据（正常揭盲前置）</button>
+        <a class="btn primary" href="/static/events.html">平台事件出站队列（订阅/死信重放/投递审计/验证材料）→</a>
+        <button class="btn small" onclick="loadAll()">刷新</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <h3>正常揭盲（需数据锁定 + 两名安全管理员审批）</h3>
+      <div class="row">
+        <input id="reqReason" placeholder="申请原因">
+        <button class="btn primary" onclick="requestUnblind()">发起揭盲申请（自动计第一票）</button>
+      </div>
+      <table>
+        <thead><tr><th>ID</th><th>状态</th><th>原因</th><th>发起人</th><th>已审批人</th><th>时间</th><th>操作</th></tr></thead>
+        <tbody id="reqRows"></tbody>
+      </table>
+      <div id="unblindTable"></div>
+    </section>
+
+    <section class="card danger-card">
+      <h3>应急揭盲记录（研究者发起，单受试者）<button class="btn small" onclick="loadEmergency()">刷新</button></h3>
+      <p class="hint">每条记录对应一名受试者，不包含任何同区组其他人的信息。</p>
+      <table>
+        <thead><tr><th>时间</th><th>中心</th><th>受试者</th><th>随机号</th><th>原因</th><th>发起人</th></tr></thead>
+        <tbody id="emergRows"><tr><td colspan="6" class="muted">—</td></tr></tbody>
+      </table>
+    </section>
+
+    <section class="card">
+      <h3>审计日志</h3>
+      <button class="btn small" onclick="loadAudit()">刷新</button>
+      <table>
+        <thead><tr><th>时间</th><th>操作人</th><th>动作</th><th>明细</th></tr></thead>
+        <tbody id="auditRows"></tbody>
+      </table>
+    </section>
+
+    <section class="card danger-card">
+      <h3>批次召回与替换发放 <button class="btn small" onclick="loadRecalls()">刷新</button></h3>
+      <p class="hint">发布后未领用库存立即冻结；范围快照即刻固化，之后补录的盒不混入本单。
+      关闭前须清空全部未决项；未发生替换核销的召回可带原因撤销；冻结库存不随撤销/关闭自动恢复。</p>
+      <div class="row">
+        <input id="rcLots" placeholder="受影响批号，逗号分隔，如 L1001,L1002">
+        <input id="rcReason" placeholder="召回原因（必填）">
+        <button class="btn danger" onclick="createRecall()">发布召回单</button>
+      </div>
+      <table>
+        <thead><tr><th>召回单</th><th>状态</th><th>批号</th><th>处置进度</th><th>未决</th><th>时间</th><th>操作</th></tr></thead>
+        <tbody id="recallRows"><tr><td colspan="7" class="muted">—</td></tr></tbody>
+      </table>
+      <div id="recallDetail"></div>
+      <h4 style="margin-top:16px">冻结库存质检解冻</h4>
+      <div class="row">
+        <input id="ufKit" placeholder="药盒号（召回关闭/撤销后方可解冻）">
+        <button class="btn" onclick="unfreezeKit()">质检解冻</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <h3>批号与药盒维护</h3>
+      <div class="grid3">
+        <div>
+          <h4>新增批号</h4>
+          <input id="lotNo" placeholder="批号（中性命名）">
+          <input id="lotCenter" placeholder="中心 01/02" value="01">
+          <input id="lotArms" placeholder='兼容组 JSON，如 ["A","B"]' value='["A","B"]'>
+          <input id="lotPrio" type="number" placeholder="优先级（小者优先）" value="50">
+          <button class="btn" onclick="addLot()">新增批号</button>
+        </div>
+        <div>
+          <h4>批量补药盒</h4>
+          <input id="kLot" placeholder="批号">
+          <input id="kCount" type="number" placeholder="数量" value="4">
+          <input id="kArm" placeholder="治疗组（留空按兼容集循环）">
+          <button class="btn" onclick="addKits()">补药盒</button>
+        </div>
+        <div>
+          <h4>药盒守恒巡检</h4>
+          <p class="hint">校验随机号唯一、每盒出入库流水平衡、持有人一致。</p>
+          <button class="btn" onclick="checkInv()">运行不变量检查</button>
+        </div>
+      </div>
+    </section>
+  </main>`;
+  loadAll();
+}
+
+async function loadAll() {
+  loadStatus(); loadRequests(); loadAudit(); loadEmergency(); loadRecalls();
+}
+
+const RECALL_STATUS = { active: ['进行中', 'orange'], closed: ['已关闭', 'green'], revoked: ['已撤销', ''] };
+
+async function createRecall() {
+  const lot_nos = el('rcLots').value.split(',').map(s => s.trim()).filter(Boolean);
+  const reason = el('rcReason').value.trim();
+  if (!lot_nos.length || !reason) return toast('批号与召回原因均必填', false);
+  if (!confirm(`确认对批号 ${lot_nos.join('、')} 发布召回单？未领用库存将立即冻结。`)) return;
+  try {
+    const r = await api('POST', '/api/safety/recalls', { lot_nos, reason });
+    toast(`召回单 ${r.recall_no} 已发布，快照 ${Object.values(r.item_counts).reduce((a, b) => a + b, 0)} 项`, true);
+    el('rcLots').value = el('rcReason').value = '';
+    loadRecalls();
+  } catch (e) { toast(e.message, false); }
+}
+
+async function loadRecalls() {
+  try {
+    const list = await api('GET', '/api/safety/recalls');
+    el('recallRows').innerHTML = list.length ? list.map(r => {
+      const [label, cls] = RECALL_STATUS[r.status];
+      const prog = Object.entries(r.item_counts).map(([s, n]) => `${s}:${n}`).join(' ');
+      return `<tr><td><b>${r.recall_no}</b></td>
+        <td><span class="tag ${cls}">${label}</span></td>
+        <td>${r.lot_nos.join('、')}</td><td class="detail">${prog || '—'}</td>
+        <td>${r.open_items ? `<span class="tag orange">${r.open_items}</span>` : '<span class="tag green">0</span>'}</td>
+        <td>${r.created_at}</td>
+        <td>
+          <button class="btn small" onclick="viewRecall(${r.id})">详情</button>
+          ${r.status === 'active' ? `
+            <button class="btn small primary" onclick="closeRecall(${r.id})">关闭</button>
+            <button class="btn small warning" onclick="revokeRecall(${r.id})">撤销</button>` : ''}
+        </td></tr>`;
+    }).join('') : '<tr><td colspan="7" class="muted">暂无召回单</td></tr>';
+  } catch (e) { toast(e.message, false); }
+}
+
+async function viewRecall(id) {
+  try {
+    const r = await api('GET', '/api/safety/recalls/' + id);
+    const summary = r.center_summary.map(cs =>
+      `<span class="tag">中心 ${cs.center_code}：${Object.entries(cs.counts).map(([s, n]) => `${s} ${n}`).join(' / ')}</span>`).join('');
+    el('recallDetail').innerHTML = `<h4>${r.recall_no} 明细（${r.reason}）</h4>
+      <p class="hint">跨中心汇总仅计数，不含任何分组信息。${summary}</p>
+      <table><thead><tr><th>盒码</th><th>批号</th><th>中心</th><th>随机号</th><th>阶段</th><th>凭证</th><th>豁免</th><th>操作</th></tr></thead>
+      <tbody>${r.items.map(it => `<tr>
+        <td>${it.kit_no}</td><td>${it.lot_no}</td><td>${it.center_code}</td>
+        <td>${it.random_no || '—'}</td><td><span class="tag ${it.state === 'redeemed' ? 'green' : it.state === 'frozen_stock' ? '' : 'orange'}">${it.state_label}</span></td>
+        <td>${it.voucher_no ? it.voucher_no + '（' + it.voucher_status + '）' : '—'}</td>
+        <td>${it.exemption_reason ? it.exemption_reason + (it.reviewed_by ? '｜复核:' + it.reviewed_by : '') : '—'}</td>
+        <td>${it.state === 'exempt_pending' ? `
+          <button class="btn small primary" onclick="reviewExempt(${it.item_id}, true)">批准豁免</button>
+          <button class="btn small warning" onclick="reviewExempt(${it.item_id}, false)">驳回</button>` : '—'}</td>
+      </tr>`).join('')}</tbody></table>`;
+  } catch (e) { toast(e.message, false); }
+}
+
+async function reviewExempt(itemId, approve) {
+  try {
+    await api('POST', `/api/safety/recall-items/${itemId}/review-exemption`, { approve });
+    toast(approve ? '豁免已批准，替换凭证已签发' : '豁免已驳回，回到待处理', true);
+    loadRecalls();
+  } catch (e) { toast(e.message, false); }
+}
+
+async function closeRecall(id) {
+  if (!confirm('确认关闭该召回单？关闭前必须清空全部未决项。')) return;
+  try {
+    const r = await api('POST', `/api/safety/recalls/${id}/close`);
+    toast(`召回单 ${r.recall_no} 已关闭`, true);
+    loadRecalls();
+  } catch (e) { toast(e.message, false); }
+}
+
+async function revokeRecall(id) {
+  const reason = prompt('撤销原因（必填；仅未发生替换核销的召回可撤销）：');
+  if (!reason) return;
+  try {
+    const r = await api('POST', `/api/safety/recalls/${id}/revoke`, { reason });
+    toast(`召回单 ${r.recall_no} 已撤销；冻结库存保持冻结，需逐盒质检解冻`, true);
+    loadRecalls();
+  } catch (e) { toast(e.message, false); }
+}
+
+async function unfreezeKit() {
+  const kit_no = el('ufKit').value.trim();
+  if (!kit_no) return;
+  try {
+    await api('POST', '/api/safety/recalls/unfreeze', { kit_no });
+    toast(`药盒 ${kit_no} 已解冻`, true);
+    el('ufKit').value = '';
+  } catch (e) { toast(e.message, false); }
+}
+
+async function loadEmergency() {
+  try {
+    const list = await api('GET', '/api/safety/emergency-list');
+    el('emergRows').innerHTML = list.length ? list.map(e => `
+      <tr><td>${e.created_at}</td><td>${e.center_code}</td><td>${e.subject_code}</td>
+      <td>${e.random_no}</td><td>${e.reason}</td><td>${e.actor}</td></tr>`).join('')
+      : '<tr><td colspan="6" class="muted">暂无应急揭盲</td></tr>';
+  } catch (e) { toast(e.message, false); }
+}
+
+async function loadStatus() {
+  try {
+    const s = await api('GET', '/api/safety/status');
+    el('status').innerHTML = `
+      <span class="tag ${s.data_locked ? 'orange' : 'green'}">数据${s.data_locked ? '已锁定 ' + (s.locked_at || '') : '未锁定'}</span>
+      <span class="tag">受试者 ${s.subjects}</span>
+      <span class="tag green">在库 ${s.kits_in_stock}</span>
+      <span class="tag">发放中 ${s.kits_dispensed}</span>
+      <span class="tag orange">已退回 ${s.kits_returned}</span>
+      <span class="tag">应急揭盲 ${s.emergency_unblinds} 人次</span>`;
+  } catch (e) { toast(e.message, false); }
+}
+
+async function lockData() {
+  if (!confirm('确认锁定数据？锁定后新入组/发药的业务语义不变，正常揭盲方可推进。')) return;
+  try { await api('POST', '/api/safety/data-lock'); toast('数据已锁定', true); loadStatus(); }
+  catch (e) { toast(e.message, false); }
+}
+
+async function requestUnblind() {
+  try {
+    const r = await api('POST', '/api/safety/unblind-requests', { reason: el('reqReason').value.trim() });
+    toast('申请已发起，等待第二名安全管理员审批', true);
+    el('reqReason').value = '';
+    renderRequests([r]);
+    loadRequests();
+  } catch (e) { toast(e.message, false); }
+}
+
+async function approveUnblind(id) {
+  try {
+    const r = await api('POST', '/api/safety/unblind-requests/' + id + '/approve');
+    if (r.status === 'approved') { toast('双人审批通过，分组已释放', true); showUnblinded(r); }
+    else toast('已计入你的审批，仍需另一人', true);
+    loadRequests();
+  } catch (e) { toast(e.message, false); }
+}
+
+async function loadRequests() {
+  try {
+    const list = await api('GET', '/api/safety/unblind-requests');
+    el('reqRows').innerHTML = list.length ? list.map(r => `
+      <tr><td>${r.id}</td>
+      <td><span class="tag ${r.status === 'approved' ? 'green' : r.status === 'rejected' ? 'orange' : ''}">${r.status}</span></td>
+      <td>${r.reason}</td><td>${r.created_by}</td>
+      <td>${r.approvals.join('、')}（需 ${r.required_approvals} 人）</td>
+      <td>${r.created_at}</td>
+      <td>${r.status === 'pending' ? `<button class="btn small primary" onclick="approveUnblind(${r.id})">审批通过</button>` : (r.status === 'approved' ? '<button class="btn small" onclick="viewApproved(' + r.id + ')">查看揭盲表</button>' : '—')}</td>
+      </tr>`).join('') : '<tr><td colspan="7" class="muted">暂无申请</td></tr>';
+  } catch (e) { toast(e.message, false); }
+}
+
+async function viewApproved(id) {
+  try {
+    const r = await api('GET', '/api/safety/unblind-requests/' + id);
+    if (r.unblinded_table) { showUnblinded(r); toast('已加载揭盲表', true); }
+  } catch (e) { toast(e.message, false); }
+}
+
+function showUnblinded(r) {
+  el('unblindTable').innerHTML = `<h4>揭盲结果（全试验，${r.unblinded_table.length} 人）</h4>
+    <table><thead><tr><th>受试者</th><th>随机号</th><th>中心</th><th>版本</th><th>治疗组</th><th>已退出</th></tr></thead>
+    <tbody>${r.unblinded_table.map(x => `<tr><td>${x.subject_code}</td><td>${x.random_no}</td><td>${x.center_code}</td><td>${x.pv_code}</td><td><b>${x.arm}</b></td><td>${x.withdrawn ? '是' : ''}</td></tr>`).join('')}</tbody></table>`;
+}
+
+async function loadAudit() {
+  try {
+    const rows = await api('GET', '/api/safety/audit?limit=300');
+    el('auditRows').innerHTML = rows.map(r => `<tr>
+      <td>${r.created_at}</td><td>${r.actor || ''}</td><td>${r.action}</td>
+      <td class="detail">${escapeHtml(r.detail)}</td></tr>`).join('');
+  } catch (e) { toast(e.message, false); }
+}
+
+async function addLot() {
+  try {
+    const compat = JSON.parse(el('lotArms').value);
+    await api('POST', '/api/safety/lots', {
+      lot_no: el('lotNo').value.trim(), center_code: el('lotCenter').value.trim(),
+      compat_arms: compat, priority: Number(el('lotPrio').value),
+    });
+    toast('批号已新增', true);
+  } catch (e) { toast(e.message, false); }
+}
+
+async function addKits() {
+  try {
+    const body = { lot_no: el('kLot').value.trim(), count: Number(el('kCount').value) };
+    if (el('kArm').value.trim()) body.arm = el('kArm').value.trim();
+    const r = await api('POST', '/api/safety/kits', body);
+    toast(`已补 ${r.added} 盒`, true);
+  } catch (e) { toast(e.message, false); }
+}
+
+async function checkInv() {
+  try {
+    const r = await api('GET', '/api/safety/invariants');
+    if (r.ok) toast('守恒检查通过：随机号唯一、药盒去向平衡、持有人一致', true);
+    else toast('发现问题：' + r.problems.join('；'), false);
+  } catch (e) { toast(e.message, false); }
+}
+
+function escapeHtml(s) {
+  return s.replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+}
+</script>
+</body>
+</html>

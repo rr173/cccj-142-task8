@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>研究者工作台</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div id="app"></div>
+<div id="toast" class="toast"></div>
+<script src="/static/app.js"></script>
+<script>
+const session = guard('investigator');
+if (session) {
+  el('app').innerHTML = headerBlock('研究者') + `
+  <main class="container">
+    <div class="grid2">
+      <section class="card">
+        <h3>① 入排标准评估</h3>
+        <label>受试者编码（筛选号）</label>
+        <input id="ec" placeholder="如 S2026-0001">
+        <div class="checks">
+          <label class="chk"><input type="checkbox" id="c1"> 已签署知情同意</label>
+          <label class="chk"><input type="checkbox" id="c2"> 年龄符合方案要求</label>
+          <label class="chk"><input type="checkbox" id="c3"> 符合适应症</label>
+          <label class="chk"><input type="checkbox" id="c4"> 无排除标准情形</label>
+        </div>
+        <button class="btn primary" onclick="checkElig()">评估入排</button>
+      </section>
+
+      <section class="card">
+        <h3>② 随机分组（取得随机号）</h3>
+        <label>受试者编码</label>
+        <input id="rc" placeholder="须先通过入排">
+        <label>方案版本</label>
+        <select id="pv"><option value="V1.0">V1.0（1:1，区组4）</option><option value="V2.0">V2.0（1:2，区组6）</option></select>
+        <button class="btn primary" onclick="doEnroll()">生成随机号</button>
+        <p class="hint">随机号按方案版本+中心分层的区组序列顺序发放；重复点击不会重复发号。</p>
+        <p class="hint blind-note">页面不显示治疗分组（盲态边界）。</p>
+      </section>
+    </div>
+
+    <section class="card">
+      <h3>本中心受试者 <button class="btn small" onclick="loadSubjects()">刷新</button></h3>
+      <table>
+        <thead><tr><th>受试者</th><th>方案版本</th><th>随机号</th><th>发药状态</th><th>持有药盒</th><th>操作</th></tr></thead>
+        <tbody id="rows"><tr><td colspan="6" class="muted">加载中…</td></tr></tbody>
+      </table>
+    </section>
+
+    <section class="card">
+      <h3>召回通知（本中心） <button class="btn small" onclick="loadRecalls()">刷新</button></h3>
+      <p class="hint">仅提示是否需要联系受试者及当前处置阶段；不涉及任何分组信息。</p>
+      <table>
+        <thead><tr><th>受试者</th><th>随机号</th><th>是否需要联系</th><th>处置阶段</th></tr></thead>
+        <tbody id="recallRows"><tr><td colspan="4" class="muted">加载中…</td></tr></tbody>
+      </table>
+    </section>
+
+    <section class="card">
+      <h3>平台事件摘要（本中心，已授权） <button class="btn small" onclick="loadEvents()">刷新</button></h3>
+      <p class="hint">仅展示事件序号、种类、中心与签发版本等摘要；不含事件正文、投递端点或任何分组/密钥信息。
+      订阅方可凭事件标识（event_id）对重复投递去重。</p>
+      <table>
+        <thead><tr><th>序号</th><th>种类</th><th>中心</th><th>发起人角色</th><th>签发版本</th><th>签发密钥</th><th>时间</th></tr></thead>
+        <tbody id="eventRows"><tr><td colspan="7" class="muted">加载中…</td></tr></tbody>
+      </table>
+    </section>
+
+    <section class="card danger-card">
+      <h3>③ 应急揭盲（仅单个受试者）</h3>
+      <div class="row">
+        <input id="emNo" placeholder="输入该受试者随机号">
+        <input id="emReason" placeholder="必须填写原因，如：严重不良事件急救">
+        <button class="btn danger" onclick="emergency()">应急揭盲</button>
+      </div>
+      <p class="hint">只显示所申请受试者一人的分组；不会、也无法获得同区组其他人的分组。全程审计留痕。</p>
+    </section>
+  </main>`;
+  loadSubjects();
+  loadRecalls();
+  loadEvents();
+}
+
+const EVENT_KIND_LABEL = {
+  enrolled: '入组', dispensed: '发药', returned: '退药',
+  recall_published: '召回发布', unblinded: '揭盲',
+};
+
+async function loadEvents() {
+  try {
+    const list = await api('GET', '/api/investigator/events');
+    el('eventRows').innerHTML = list.length ? list.map(e => `
+      <tr>
+        <td><b>${e.seq}</b></td>
+        <td>${EVENT_KIND_LABEL[e.kind] || e.kind}</td>
+        <td>${e.center_code || '<span class="tag">平台级</span>'}</td>
+        <td>${e.actor_role}</td>
+        <td>${e.sub_version}</td>
+        <td><code class="key-id">${(e.sign_key_id || '').slice(0, 10)}…</code></td>
+        <td>${e.created_at}</td>
+      </tr>`).join('')
+      : '<tr><td colspan="7" class="muted">本中心暂无事件</td></tr>';
+  } catch (e) { toast(e.message, false); }
+}
+
+async function loadRecalls() {
+  try {
+    const list = await api('GET', '/api/investigator/recall-notices');
+    el('recallRows').innerHTML = list.length ? list.map(n => `
+      <tr><td>${n.subject_code}</td><td><b>${n.random_no}</b></td>
+      <td>${n.needs_contact ? '<span class="tag orange">需要联系</span>' : '<span class="tag green">无需联系</span>'}</td>
+      <td>${n.stage}</td></tr>`).join('')
+      : '<tr><td colspan="4" class="muted">本中心暂无进行中的召回处置</td></tr>';
+  } catch (e) { toast(e.message, false); }
+}
+
+async function checkElig() {
+  const subject_code = el('ec').value.trim();
+  const answers = {
+    informed_consent: el('c1').checked, age_ok: el('c2').checked,
+    indication_ok: el('c3').checked, no_exclusion: el('c4').checked,
+  };
+  try {
+    const r = await api('POST', '/api/investigator/eligibility', { subject_code, answers });
+    if (r.eligible) { toast('入排通过，可进行随机', true); el('rc').value = subject_code; }
+    else toast('未通过入排：' + r.failures.join(', '), false);
+  } catch (e) { toast(e.message, false); }
+}
+
+async function doEnroll() {
+  try {
+    const r = await api('POST', '/api/investigator/enroll', {
+      subject_code: el('rc').value.trim(), pv_code: el('pv').value,
+    });
+    toast((r.already_enrolled ? '该受试者已随机，随机号仍为 ' : '随机成功，随机号：') + r.random_no, true);
+    loadSubjects();
+  } catch (e) { toast(e.message, false); }
+}
+
+async function loadSubjects() {
+  try {
+    const list = await api('GET', '/api/investigator/subjects');
+    el('rows').innerHTML = list.length ? list.map(s => `
+      <tr>
+        <td>${s.subject_code}</td><td>${s.pv_code}</td><td><b>${s.random_no || '—'}</b></td>
+        <td>${s.dispensed ? '<span class="tag green">已发药</span>' : '<span class="tag">未发药</span>'}</td>
+        <td>${s.kit_no ? s.kit_no + '（' + s.lot_no + '）' : '—'}</td>
+        <td>${s.random_no ? `<button class="btn small danger" onclick="askEmergency('${s.random_no}')">应急揭盲</button>` : '—'}</td>
+      </tr>`).join('') : '<tr><td colspan="6" class="muted">暂无受试者</td></tr>';
+  } catch (e) { toast(e.message, false); }
+}
+
+function askEmergency(no) { el('emNo').value = no; el('emReason').focus(); }
+
+async function emergency() {
+  const random_no = el('emNo').value.trim();
+  const reason = el('emReason').value.trim();
+  if (!random_no || !reason) return toast('随机号与原因均必填', false);
+  if (!confirm('确认对该单个受试者应急揭盲？此操作会被永久审计记录。')) return;
+  try {
+    const r = await api('POST', '/api/investigator/emergency-unblind/' + encodeURIComponent(random_no), { reason });
+    alert(`应急揭盲结果（仅该受试者）\n受试者：${r.subject_code}\n随机号：${r.random_no}\n治疗组：${r.arm}`);
+  } catch (e) { toast(e.message, false); }
+}
+</script>
+</body>
+</html>

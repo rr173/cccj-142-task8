@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>库外验签</title>
+<link rel="stylesheet" href="/static/shared/style.css">
+</head>
+<body>
+<header>
+  <h1>落款记录 · 库外重算校验</h1>
+  <nav><a href="/">首页</a></nav>
+</header>
+<main>
+  <div class="card">
+    <h2>粘贴自描述记录信封</h2>
+    <p class="muted">
+      本页只使用服务端公布的签发公钥，在浏览器内独立完成五条核验：
+      终端证书签发链 → 挑战令牌签名 → 终端对完整请求的签名 →
+      业务结果摘要 → 记录信封服务端签名。不查库、不需要登录。
+    </p>
+    <textarea id="env" style="min-height:220px" placeholder='{ "payload": { … }, "server_sig": "…" }'></textarea>
+    <div class="row" style="margin-top:8px">
+      <button id="verifyBtn">库外重算校验</button>
+      <span class="muted">服务端公钥自动从 <span class="mono">/api/server-key</span> 获取</span>
+    </div>
+    <div class="flash" id="msg"></div>
+    <pre id="out" class="mono" style="background:#fafbfc;border:1px solid var(--line);border-radius:8px;padding:10px;min-height:60px"></pre>
+  </div>
+</main>
+<script src="/static/shared/sg-web.js"></script>
+<script src="/static/shared/api.js"></script>
+<script>
+const $ = (id) => document.getElementById(id);
+$('verifyBtn').onclick = async () => {
+  try {
+    let envelope;
+    try { envelope = JSON.parse($('env').value); }
+    catch { throw Object.assign(new Error('信封不是合法 JSON'), { code: 'BAD_JSON' }); }
+    const r = await SG.api('POST', '/api/verify-record', { envelope });
+    $('msg').className = 'flash ' + (r.ok ? 'ok' : 'err');
+    $('msg').textContent = r.ok
+      ? '全部五项核验通过：该记录信封未被改动，签名链完整。'
+      : '核验未通过，存在被改动或签名不合法项（见明细）。';
+    $('out').textContent = JSON.stringify(r, null, 2);
+  } catch (e) {
+    $('msg').className = 'flash err';
+    $('msg').textContent = `[${e.code || 'ERROR'}] ${e.message}`;
+  }
+};
+</script>
+</body>
+</html>

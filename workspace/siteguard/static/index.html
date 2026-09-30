@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>建设现场签署终端可信登记</title>
+<link rel="stylesheet" href="/static/shared/style.css">
+</head>
+<body>
+<header>
+  <h1>建设现场签署终端可信登记</h1>
+  <nav>
+    <a href="/static/terminal.html">终端登记 / 自检</a>
+    <a href="/static/admin.html">安全管理</a>
+    <a href="/static/audit.html">中性审计</a>
+    <a href="/static/verify.html">库外验签</a>
+  </nav>
+  <span class="spacer"></span>
+  <span class="who" id="who"></span>
+</header>
+<main>
+  <div class="card">
+    <h2>账号登录（安全管理员 / 中性审计员）</h2>
+    <div class="row">
+      <div class="field"><label>账号</label><input id="username" autocomplete="username" value="safeA"></div>
+      <div class="field"><label>密码</label><input id="password" type="password" autocomplete="current-password" value="demo1234"></div>
+      <button id="loginBtn">登录</button>
+      <a href="/static/terminal.html"><button type="button" class="secondary">终端无需账号，直接登记 →</button></a>
+    </div>
+    <div class="flash" id="msg"></div>
+    <p class="muted">
+      演示账号：safeA（甲站安全管理员）、safeB（乙站）、auditor（中性审计员），密码均 demo1234。
+      终端首次登记使用安全管理员签发的<b>一次性注册码</b>，不需要账号。
+    </p>
+  </div>
+
+  <div class="card">
+    <h2>模块要点</h2>
+    <table>
+      <tr><th>环节</th><th>落地方式</th></tr>
+      <tr><td>一次性注册码</td><td>两个浏览器并发登记只有一个取得证书；码用后即废，重启不复活</td></tr>
+      <tr><td>终端密钥</td><td>Web Crypto（ECDSA P-256）在浏览器生成，私钥不出终端；服务端签发绑定站点/设备/角色/有效期/代次的证书</td></tr>
+      <tr><td>挑战-落款</td><td>随机数+动作+会话+角色+正文摘要+短截止；替换任一字段拒绝；同挑战同请求返回首次结果</td></tr>
+      <tr><td>轮换 / 隔离</td><td>旧密钥只能核对历史、不能领新挑战；隔离即时生效；历史记录持续可验</td></tr>
+      <tr><td>持久化</td><td>所有事件 fsync 追加落盘，重启按序号重放；审计只见中性分区与编号</td></tr>
+    </table>
+  </div>
+</main>
+<script src="/static/shared/api.js"></script>
+<script>
+  const who = document.getElementById('who');
+  const id = SG.identity();
+  if (id) who.textContent = `${id.display}（${id.username}）`;
+
+  document.getElementById('loginBtn').onclick = async () => {
+    const msg = document.getElementById('msg');
+    try {
+      const login = await SG.api('POST', '/api/login', {
+        username: username.value, password: password.value,
+      });
+      SG.setSession(login);
+      SG.flash(msg, 'ok', '登录成功，正在跳转…');
+      setTimeout(() => {
+        location.href = login.role === 'auditor'
+          ? '/static/audit.html' : '/static/admin.html';
+      }, 400);
+    } catch (e) {
+      SG.flash(msg, 'err', e.message);
+    }
+  };
+</script>
+</body>
+</html>

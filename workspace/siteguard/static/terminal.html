@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>终端登记 / 自检</title>
+<link rel="stylesheet" href="/static/shared/style.css">
+</head>
+<body>
+<header>
+  <h1>签署终端 · 登记与自检</h1>
+  <nav>
+    <a href="/">首页</a><a href="/static/verify.html">库外验签</a>
+  </nav>
+</header>
+<main>
+  <!-- 本地身份材料（仅本浏览器 localStorage） -->
+  <div class="card">
+    <h2>① 本机终端材料</h2>
+    <p class="muted">终端私钥由 Web Crypto 在本机生成，<b>永不出设备</b>；下列 JWK 仅为演示自检可见，生产环境不可导出。</p>
+    <div class="row">
+      <button id="genKeys">生成/重置本机密钥对</button>
+      <span id="keyState" class="muted">尚未生成</span>
+    </div>
+    <div class="flash" id="keyMsg"></div>
+  </div>
+
+  <div class="card">
+    <h2>② 电子知情同意与首次登记</h2>
+    <div class="consent" id="consentText">加载中…</div>
+    <div class="row" style="margin-top:10px">
+      <div class="field"><label>一次性注册码</label><input id="regCode" placeholder="安全管理员签发的 24 位码" style="min-width:300px"></div>
+      <div class="field"><label>设备标识（中性）</label><input id="devLabel" value="3号拌合站平板"></div>
+      <label class="field" style="flex-direction:row;align-items:center;gap:6px">
+        <input type="checkbox" id="agree" style="min-width:auto"> 我已阅读并同意上述版本
+      </label>
+      <button id="registerBtn" disabled>提交登记</button>
+    </div>
+    <div class="flash" id="regMsg"></div>
+  </div>
+
+  <div class="card">
+    <h2>③ 终端自检</h2>
+    <div class="row">
+      <button id="inspectBtn">用本机私钥自证并查询状态</button>
+      <button id="loadCertBtn" class="secondary">从本地材料载入证书</button>
+    </div>
+    <div class="flash" id="inspMsg"></div>
+    <pre id="inspOut" class="mono" style="background:#fafbfc;border:1px solid var(--line);border-radius:8px;padding:10px;min-height:40px"></pre>
+  </div>
+
+  <div class="card">
+    <h2>④ 领取挑战并完成一次落款（演示）</h2>
+    <div class="row">
+      <div class="field"><label>业务动作</label><select id="action"></select></div>
+      <div class="field"><label>落款角色</label><select id="role"></select></div>
+      <div class="field"><label>会话标识</label><input id="sessionId" value="SESS-WEB-0001"></div>
+    </div>
+    <div class="field"><label>正文（浏览器本地计算 SHA-256，仅提交摘要）</label>
+      <textarea id="bodyText">{"task":"混凝土浇筑","level":"3F"}</textarea>
+    </div>
+    <div class="row">
+      <button id="challengeBtn">领取挑战</button>
+      <button id="submitBtn" disabled>私钥签署完整请求并提交</button>
+      <button id="replayBtn" class="secondary" disabled>同请求重发（应返回首次结果）</button>
+      <button id="tamperBtn" class="danger" disabled>篡改角色后提交（应被拒绝）</button>
+    </div>
+    <div class="flash" id="opMsg"></div>
+    <pre id="opOut" class="mono" style="background:#fafbfc;border:1px solid var(--line);border-radius:8px;padding:10px;min-height:40px"></pre>
+  </div>
+</main>
+
+<script src="/static/shared/sg-web.js"></script>
+<script src="/static/shared/api.js"></script>
+<script src="/static/terminal.js"></script>
+</body>
+</html>
